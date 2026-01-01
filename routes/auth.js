@@ -46,13 +46,13 @@ router.post("/register", async (req, res) => {
       user: result.rows[0],
     });
   } catch (err) {
-    console.error("REGISTER ERROR 👉", err.message);
+    console.error("REGISTER ERROR 👉", err);
     res.status(500).json({ error: "Server error" });
   }
 });
 
 /* =========================
-   🔑 LOGIN
+   🔑 LOGIN (FINAL SAFE)
 ========================= */
 router.post("/login", async (req, res) => {
   try {
@@ -76,13 +76,20 @@ router.post("/login", async (req, res) => {
 
     const user = result.rows[0];
 
-    if (user.active === false) {
+    // ✅ SAFE ACTIVE CHECK
+    if (user.active !== undefined && user.active === false) {
       return res.status(403).json({ error: "Account is deactivated" });
     }
 
     const match = await bcrypt.compare(password, user.password);
     if (!match) {
       return res.status(401).json({ error: "Invalid credentials" });
+    }
+
+    // ✅ JWT SECRET SAFETY
+    if (!process.env.JWT_SECRET) {
+      console.error("❌ JWT_SECRET missing");
+      return res.status(500).json({ error: "Server configuration error" });
     }
 
     const token = jwt.sign(
@@ -102,7 +109,7 @@ router.post("/login", async (req, res) => {
       },
     });
   } catch (err) {
-    console.error("LOGIN ERROR 👉", err.message);
+    console.error("LOGIN ERROR 👉", err);
     res.status(500).json({ error: "Server error" });
   }
 });
@@ -145,15 +152,12 @@ router.post("/forgot-password", async (req, res) => {
     await sendMail(
       user.personal_email,
       "Password Reset OTP – HSY Association",
-      forgotPasswordTemplate({
-        name: user.name,
-        otp,
-      })
+      forgotPasswordTemplate({ name: user.name, otp })
     );
 
     res.json({ message: "OTP sent to registered email" });
   } catch (err) {
-    console.error("FORGOT PASSWORD ERROR 👉", err.message);
+    console.error("FORGOT PASSWORD ERROR 👉", err);
     res.status(500).json({ error: "Server error" });
   }
 });
@@ -178,8 +182,6 @@ router.post("/verify-otp", async (req, res) => {
       return res.status(404).json({ error: "User not found" });
     }
 
-    const userId = userResult.rows[0].id;
-
     const otpResult = await pool.query(
       `SELECT otp_hash
        FROM password_resets
@@ -188,7 +190,7 @@ router.post("/verify-otp", async (req, res) => {
          AND expires_at > NOW()
        ORDER BY created_at DESC
        LIMIT 1`,
-      [userId]
+      [userResult.rows[0].id]
     );
 
     if (!otpResult.rowCount) {
@@ -202,7 +204,7 @@ router.post("/verify-otp", async (req, res) => {
 
     res.json({ message: "OTP verified successfully" });
   } catch (err) {
-    console.error("VERIFY OTP ERROR 👉", err.message);
+    console.error("VERIFY OTP ERROR 👉", err);
     res.status(500).json({ error: "Server error" });
   }
 });
@@ -242,14 +244,12 @@ router.post("/reset-password", async (req, res) => {
     await sendMail(
       userResult.rows[0].personal_email,
       "Password Reset Successful – HSY Association",
-      passwordResetSuccessTemplate({
-        name: userResult.rows[0].name,
-      })
+      passwordResetSuccessTemplate({ name: userResult.rows[0].name })
     );
 
     res.json({ message: "Password reset successful" });
   } catch (err) {
-    console.error("RESET PASSWORD ERROR 👉", err.message);
+    console.error("RESET PASSWORD ERROR 👉", err);
     res.status(500).json({ error: "Server error" });
   }
 });
@@ -262,7 +262,7 @@ router.get("/verify", verifyToken, (req, res) => {
 });
 
 /* =========================
-   🔁 CHANGE PASSWORD (LOGGED IN) – FINAL FIX
+   🔁 CHANGE PASSWORD (LOGGED IN)
 ========================= */
 router.post("/change-password", verifyToken, async (req, res) => {
   try {
@@ -293,13 +293,12 @@ router.post("/change-password", verifyToken, async (req, res) => {
       [hashed, req.user.id]
     );
 
-    // 🔑 TELL FRONTEND TO LOGOUT
     res.json({
       message: "Password changed successfully. Please login again.",
       forceLogout: true,
     });
   } catch (err) {
-    console.error("CHANGE PASSWORD ERROR 👉", err.message);
+    console.error("CHANGE PASSWORD ERROR 👉", err);
     res.status(500).json({ error: "Server error" });
   }
 });
