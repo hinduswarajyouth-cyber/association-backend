@@ -1,17 +1,33 @@
 require("dotenv").config();
 
 const express = require("express");
-const app = express();
-const pool = require("./db");
 const helmet = require("helmet");
-const rateLimit = require("express-rate-limit");
 const cors = require("cors");
+const rateLimit = require("express-rate-limit");
+const path = require("path");
+
+const pool = require("./db");
+
+const app = express();
 
 /* =========================
-   🔐 SECURITY MIDDLEWARE
+   🔐 SECURITY
 ========================= */
-app.use(helmet());
-app.use(cors());
+app.use(
+  helmet({
+    crossOriginResourcePolicy: false, // ✅ required for image loading
+  })
+);
+
+/* =========================
+   🌐 CORS
+========================= */
+app.use(
+  cors({
+    origin: "http://localhost:5173", // ✅ Vite frontend
+    credentials: true,
+  })
+);
 
 /* =========================
    📦 BODY PARSERS
@@ -22,95 +38,62 @@ app.use(express.urlencoded({ extended: true }));
 /* =========================
    ⏱ RATE LIMITERS
 ========================= */
-
-// Global limiter (all routes)
 const generalLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000, // 15 minutes
+  windowMs: 15 * 60 * 1000,
   max: 200,
-  message: "Too many requests, please try again later",
 });
 
-// Auth limiter
 const authLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
   max: 100,
-  message: "Too many authentication attempts",
 });
 
-// Admin limiter
 const adminLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
   max: 50,
-  message: "Too many admin requests",
 });
 
-// Apply limiters
 app.use(generalLimiter);
 app.use("/auth", authLimiter);
-app.use("/verify-receipt", authLimiter);
 app.use("/admin", adminLimiter);
+
+/* =========================
+   🗂 STATIC FILES (UPLOADS)
+========================= */
+app.use(
+  "/uploads",
+  cors({ origin: "*" }), // ✅ allow browser image fetch
+  express.static(path.join(__dirname, "uploads"))
+);
 
 /* =========================
    🔌 DATABASE CHECK
 ========================= */
 pool
   .query("SELECT 1")
-  .then(() => console.log("✅ DB Connected"))
-  .catch((err) => console.error("❌ DB ERROR 👉", err.message));
+  .then(() => console.log("✅ Database connected"))
+  .catch((err) => console.error("❌ DB error:", err.message));
 
 /* =========================
    🚏 ROUTES
 ========================= */
-app.use("/auth", require("./auth"));
-app.use("/funds", require("./funds"));
-app.use("/reports", require("./reports"));
-app.use("/receipts", require("./receipts"));
-app.use("/admin", require("./admin"));
-app.use("/members", require("./members"));
+app.use("/auth", require("./routes/auth"));
+app.use("/admin", require("./routes/admin"));
+app.use("/members", require("./routes/members"));
+app.use("/funds", require("./routes/funds"));
+app.use("/treasurer", require("./routes/treasurer"));
+app.use("/reports", require("./routes/reports"));
+app.use("/receipts", require("./routes/receipts"));
+app.use("/api/complaints", require("./routes/complaints"));
+app.use("/api/meetings", require("./routes/meetings"));
+
+
 
 /* =========================
    🏠 ROOT
 ========================= */
 app.get("/", (req, res) => {
-  res.send("Backend running 🚀");
-});
-
-/* =========================
-   🌍 PUBLIC RECEIPT VERIFY
-========================= */
-app.get("/verify-receipt/:receiptNo", async (req, res) => {
-  try {
-    const { receiptNo } = req.params;
-
-    const result = await pool.query(
-      `SELECT 
-         c.receipt_no,
-         c.amount,
-         c.receipt_date,
-         u.name AS member_name,
-         f.fund_name
-       FROM contributions c
-       JOIN users u ON c.member_id = u.id
-       JOIN funds f ON c.fund_id = f.id
-       WHERE c.receipt_no = $1`,
-      [receiptNo]
-    );
-
-    if (!result.rows.length) {
-      return res.status(404).json({
-        valid: false,
-        message: "Invalid receipt number",
-      });
-    }
-
-    res.status(200).json({
-      valid: true,
-      receipt: result.rows[0],
-    });
-  } catch (err) {
-    console.error("VERIFY RECEIPT ERROR 👉", err.message);
-    res.status(500).json({ error: "Server error" });
-  }
+  res.send("🚀 Association Backend Running");
 });
 
 /* =========================

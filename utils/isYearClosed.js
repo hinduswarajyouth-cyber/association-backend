@@ -1,11 +1,18 @@
 const pool = require("../db");
 
-const isYearClosed = async (year) => {
+module.exports = async function isYearClosed(year) {
   const result = await pool.query(
-    "SELECT id FROM year_closings WHERE year = $1",
+    `SELECT status
+     FROM financial_years
+     WHERE year = $1
+     LIMIT 1`,
     [year]
   );
-  return result.rows.length > 0;
-};
 
-module.exports = isYearClosed;
+  // ❗ No record means CLOSED by default
+  if (result.rowCount === 0) {
+    return true;
+  }
+
+  return result.rows[0].status !== "OPEN";
+};
