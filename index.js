@@ -15,39 +15,19 @@ const app = express();
 ========================= */
 app.use(
   helmet({
-    crossOriginResourcePolicy: false,
+    crossOriginResourcePolicy: false, // allow images
   })
 );
 
 /* =========================
-   🌐 CORS (FINAL & SAFE ✅)
+   🌐 CORS (FINAL – PRODUCTION SAFE ✅)
 ========================= */
-const allowedOrigins = [
-  "http://localhost:5173",
-  "https://association-frontend-zeta.vercel.app",
-];
-
 app.use(
   cors({
-    origin: (origin, callback) => {
-      // Allow Postman / server-to-server
-      if (!origin) return callback(null, true);
-
-      if (allowedOrigins.includes(origin)) {
-        return callback(null, true);
-      }
-
-      // ❗ IMPORTANT: return false instead of throwing error
-      return callback(null, false);
-    },
+    origin: true,        // 🔥 VERY IMPORTANT
     credentials: true,
-    methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-    allowedHeaders: ["Content-Type", "Authorization"],
   })
 );
-
-/* ✅ HANDLE PREFLIGHT REQUESTS */
-app.options("*", cors());
 
 /* =========================
    📦 BODY PARSERS
@@ -66,7 +46,7 @@ app.use(
 );
 
 /* =========================
-   🗂 STATIC FILES
+   🗂 STATIC FILES (UPLOADS)
 ========================= */
 app.use("/uploads", express.static(path.join(__dirname, "uploads")));
 
