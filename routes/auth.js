@@ -52,13 +52,15 @@ router.post("/register", async (req, res) => {
 });
 
 /* =========================
-   🔑 LOGIN (FINAL SAFE)
+   🔑 LOGIN (EMAIL OR USERNAME – FIXED)
 ========================= */
 router.post("/login", async (req, res) => {
   try {
-    const { username, password } = req.body;
+    const { email, username, password } = req.body;
 
-    if (!username || !password) {
+    const loginId = email || username;
+
+    if (!loginId || !password) {
       return res
         .status(400)
         .json({ error: "Association ID and password required" });
@@ -66,8 +68,9 @@ router.post("/login", async (req, res) => {
 
     const result = await pool.query(
       `SELECT id,name,username,password,role,is_first_login,active
-       FROM users WHERE username=$1`,
-      [username]
+       FROM users
+       WHERE username=$1 OR personal_email=$1`,
+      [loginId]
     );
 
     if (!result.rowCount) {
@@ -76,8 +79,7 @@ router.post("/login", async (req, res) => {
 
     const user = result.rows[0];
 
-    // ✅ SAFE ACTIVE CHECK
-    if (user.active !== undefined && user.active === false) {
+    if (user.active === false) {
       return res.status(403).json({ error: "Account is deactivated" });
     }
 
@@ -86,7 +88,6 @@ router.post("/login", async (req, res) => {
       return res.status(401).json({ error: "Invalid credentials" });
     }
 
-    // ✅ JWT SECRET SAFETY
     if (!process.env.JWT_SECRET) {
       console.error("❌ JWT_SECRET missing");
       return res.status(500).json({ error: "Server configuration error" });
