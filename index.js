@@ -15,19 +15,39 @@ const app = express();
 ========================= */
 app.use(
   helmet({
-    crossOriginResourcePolicy: false, // ✅ required for image loading
+    crossOriginResourcePolicy: false,
   })
 );
 
 /* =========================
-   🌐 CORS
+   🌐 CORS (FINAL & SAFE ✅)
 ========================= */
+const allowedOrigins = [
+  "http://localhost:5173",
+  "https://association-frontend-zeta.vercel.app",
+];
+
 app.use(
   cors({
-    origin: "http://localhost:5173", // ✅ Vite frontend
+    origin: (origin, callback) => {
+      // Allow Postman / server-to-server
+      if (!origin) return callback(null, true);
+
+      if (allowedOrigins.includes(origin)) {
+        return callback(null, true);
+      }
+
+      // ❗ IMPORTANT: return false instead of throwing error
+      return callback(null, false);
+    },
     credentials: true,
+    methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allowedHeaders: ["Content-Type", "Authorization"],
   })
 );
+
+/* ✅ HANDLE PREFLIGHT REQUESTS */
+app.options("*", cors());
 
 /* =========================
    📦 BODY PARSERS
@@ -36,42 +56,26 @@ app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
 /* =========================
-   ⏱ RATE LIMITERS
-========================= */
-const generalLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000,
-  max: 200,
-});
-
-const authLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000,
-  max: 100,
-});
-
-const adminLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000,
-  max: 50,
-});
-
-app.use(generalLimiter);
-app.use("/auth", authLimiter);
-app.use("/admin", adminLimiter);
-
-/* =========================
-   🗂 STATIC FILES (UPLOADS)
+   ⏱ RATE LIMITER
 ========================= */
 app.use(
-  "/uploads",
-  cors({ origin: "*" }), // ✅ allow browser image fetch
-  express.static(path.join(__dirname, "uploads"))
+  rateLimit({
+    windowMs: 15 * 60 * 1000,
+    max: 200,
+  })
 );
+
+/* =========================
+   🗂 STATIC FILES
+========================= */
+app.use("/uploads", express.static(path.join(__dirname, "uploads")));
 
 /* =========================
    🔌 DATABASE CHECK
 ========================= */
 pool
   .query("SELECT 1")
-  .then(() => console.log("✅ Database connected"))
+  .then(() => console.log("✅ DB Connected successfully"))
   .catch((err) => console.error("❌ DB error:", err.message));
 
 /* =========================
@@ -86,8 +90,6 @@ app.use("/reports", require("./routes/reports"));
 app.use("/receipts", require("./routes/receipts"));
 app.use("/api/complaints", require("./routes/complaints"));
 app.use("/api/meetings", require("./routes/meetings"));
-
-
 
 /* =========================
    🏠 ROOT
@@ -111,7 +113,6 @@ app.use((err, req, res, next) => {
    🚀 START SERVER
 ========================= */
 const PORT = process.env.PORT || 3000;
-
 app.listen(PORT, () => {
   console.log(`🚀 Server running on port ${PORT}`);
 });
