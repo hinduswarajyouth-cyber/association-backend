@@ -26,17 +26,9 @@ function amountToWords(num) {
     if (n < 20) return a[n];
     if (n < 100) return b[Math.floor(n / 10)] + (n % 10 ? " " + a[n % 10] : "");
     if (n < 1000)
-      return (
-        a[Math.floor(n / 100)] +
-        " Hundred" +
-        (n % 100 ? " " + inWords(n % 100) : "")
-      );
+      return a[Math.floor(n / 100)] + " Hundred" + (n % 100 ? " " + inWords(n % 100) : "");
     if (n < 100000)
-      return (
-        inWords(Math.floor(n / 1000)) +
-        " Thousand" +
-        (n % 1000 ? " " + inWords(n % 1000) : "")
-      );
+      return inWords(Math.floor(n / 1000)) + " Thousand" + (n % 1000 ? " " + inWords(n % 1000) : "");
     return "";
   };
 
@@ -44,7 +36,7 @@ function amountToWords(num) {
 }
 
 /* =====================================================
-   🌐 PUBLIC RECEIPT VERIFICATION
+   🌐 PUBLIC RECEIPT VERIFICATION (QR TARGET)
 ===================================================== */
 router.get("/verify/:receiptNo", async (req, res) => {
   try {
@@ -89,7 +81,7 @@ router.get("/verify/:receiptNo", async (req, res) => {
 });
 
 /* =====================================================
-   🔐 MEMBER PDF RECEIPT (FINAL – STABLE)
+   🔐 MEMBER PDF RECEIPT WITH QR (FINAL)
 ===================================================== */
 router.get("/pdf/:receiptNo", verifyToken, async (req, res) => {
   try {
@@ -114,24 +106,23 @@ router.get("/pdf/:receiptNo", verifyToken, async (req, res) => {
     const r = result.rows[0];
     const amountWords = amountToWords(r.amount);
 
-    const verifyUrl = `${process.env.BASE_URL}/receipts/verify/${receiptNo}`;
+    /* ===== QR URL (FINAL & CORRECT) ===== */
+    console.log("QR BASE URL =", process.env.BASE_URL);
+    const verifyUrl = `${process.env.BASE_URL}/verify/${receiptNo}`;
+
     const qrBuffer = Buffer.from(
       (await QRCode.toDataURL(verifyUrl)).split(",")[1],
       "base64"
     );
 
     res.setHeader("Content-Type", "application/pdf");
-    res.setHeader(
-      "Content-Disposition",
-      `attachment; filename=${receiptNo}.pdf`
-    );
+    res.setHeader("Content-Disposition", `attachment; filename=${receiptNo}.pdf`);
 
     const doc = new PDFDocument({ size: "A4", margin: 50 });
     doc.pipe(res);
 
     const logoPath = path.join(__dirname, "../assets/logo.png");
 
-    /* ===== HEADER (FIXED & SAFE) ===== */
     if (fs.existsSync(logoPath)) {
       doc.image(logoPath, 50, 40, { width: 85 });
     }
@@ -140,62 +131,32 @@ router.get("/pdf/:receiptNo", verifyToken, async (req, res) => {
       .font("Helvetica-Bold")
       .fillColor("#0d47a1")
       .fontSize(16)
-      .text(
-        "HINDUSWARAJ YOUTH WELFARE ASSOCIATION",
-        150,
-        50,
-        {
-          width: 420,
-          align: "center",
-          lineBreak: true,
-        }
-      );
-
-    /* ===== ADDRESS BLOCK ===== */
-    const addressStartY = 82;
-
-    doc
-      .font("Helvetica")
-      .fillColor("black")
-      .fontSize(10)
-      .text("Aravind Nagar, Jagtial – 505327", 150, addressStartY, {
-        width: 420,
-        align: "center",
-      })
-      .text("Reg No: 784/25", 150, addressStartY + 14, {
-        width: 420,
-        align: "center",
-      })
-      .text("Mobile: 8499878425", 150, addressStartY + 28, {
-        width: 420,
-        align: "center",
-      })
-      .text("Email: hinduswarajyouth@gmail.com", 150, addressStartY + 42, {
+      .text("HINDUSWARAJ YOUTH WELFARE ASSOCIATION", 150, 50, {
         width: 420,
         align: "center",
       });
 
-    /* ===== TITLE ===== */
     doc
-      .moveDown(2)
+      .fontSize(10)
+      .fillColor("black")
+      .text("Aravind Nagar, Jagtial – 505327", 150, 82, { width: 420, align: "center" })
+      .text("Reg No: 784/25", 150, 96, { width: 420, align: "center" })
+      .text("Mobile: 8499878425", 150, 110, { width: 420, align: "center" })
+      .text("Email: hinduswarajyouth@gmail.com", 150, 124, { width: 420, align: "center" });
+
+    doc.moveDown(2)
       .font("Helvetica-Bold")
       .fillColor("#c9a227")
       .fontSize(14)
       .text("OFFICIAL PAYMENT RECEIPT", { align: "center" });
 
-    /* ===== RECEIPT BOX ===== */
     const startY = doc.y + 20;
-    doc.roundedRect(50, startY, 500, 215, 12)
-      .strokeColor("#0d47a1")
-      .stroke();
-
-    const leftX = 80;
-    const gap = 140;
+    doc.roundedRect(50, startY, 500, 215, 12).strokeColor("#0d47a1").stroke();
 
     const row = (label, value, y) => {
-      doc.fontSize(11).fillColor("black").text(label, leftX, y);
-      doc.text(":", leftX + gap, y);
-      doc.text(value, leftX + gap + 15, y);
+      doc.fontSize(11).fillColor("black").text(label, 80, y);
+      doc.text(":", 220, y);
+      doc.text(value, 235, y);
     };
 
     row("Receipt No", r.receipt_no, startY + 25);
@@ -205,18 +166,13 @@ router.get("/pdf/:receiptNo", verifyToken, async (req, res) => {
     row("Amount (in words)", amountWords, startY + 125);
     row("Receipt Date", new Date(r.receipt_date).toDateString(), startY + 150);
 
-    /* ===== QR ===== */
     doc
       .fontSize(10)
       .fillColor("#0d47a1")
-      .text("Scan QR to verify receipt", 360, startY + 30, {
-        width: 160,
-        align: "center",
-      });
+      .text("Scan QR to verify receipt", 360, startY + 30, { width: 160, align: "center" });
 
     doc.image(qrBuffer, 380, startY + 55, { width: 120 });
 
-    /* ===== FOOTER ===== */
     doc
       .fontSize(9)
       .fillColor("gray")
