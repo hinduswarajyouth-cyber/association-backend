@@ -161,7 +161,62 @@ router.post("/forgot-password", async (req, res) => {
     res.status(500).json({ error: "Server error" });
   }
 });
+/* =========================
+   🔐 VERIFY OTP (FORGOT PASSWORD)
+========================= */
+router.post("/verify-otp", async (req, res) => {
+  try {
+    const { username, otp } = req.body;
 
+    if (!username || !otp) {
+      return res.status(400).json({ error: "Association ID and OTP required" });
+    }
+
+    const userResult = await pool.query(
+      "SELECT id FROM users WHERE username=$1",
+      [username]
+    );
+
+    if (!userResult.rowCount) {
+      return res.status(404).json({ error: "User not found" });
+    }
+
+    const userId = userResult.rows[0].id;
+
+    const otpResult = await pool.query(
+      `SELECT otp_hash, expires_at
+       FROM password_resets
+       WHERE user_id=$1 AND used=false
+       ORDER BY created_at DESC
+       LIMIT 1`,
+      [userId]
+    );
+
+    if (!otpResult.rowCount) {
+      return res.status(400).json({ error: "OTP not found or expired" });
+    }
+
+    const { otp_hash, expires_at } = otpResult.rows[0];
+
+    if (new Date() > expires_at) {
+      return res.status(400).json({ error: "OTP expired" });
+    }
+
+    const isValid = await bcrypt.compare(otp, otp_hash);
+
+    if (!isValid) {
+      return res.status(400).json({ error: "Invalid OTP" });
+    }
+
+    res.json({
+      success: true,
+      message: "OTP verified successfully",
+    });
+  } catch (err) {
+    console.error("VERIFY OTP ERROR 👉", err);
+    res.status(500).json({ error: "Server error" });
+  }
+});
 /* =========================
    🔐 RESET PASSWORD
 ========================= */
