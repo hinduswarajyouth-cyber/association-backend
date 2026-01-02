@@ -24,8 +24,8 @@ app.use(
 ========================= */
 app.use(
   cors({
-    origin: true,        // 🔥 VERY IMPORTANT
-    credentials: true,
+    origin: true,        // allow frontend domain dynamically
+    credentials: true,   // allow cookies / auth headers
   })
 );
 
@@ -59,10 +59,10 @@ pool
   .catch((err) => console.error("❌ DB error:", err.message));
 
 /* =========================
-   🚏 ROUTES
+   🚏 ROUTES (CLEAN & CORRECT)
 ========================= */
 app.use("/auth", require("./routes/auth"));
-app.use("/admin", require("./routes/admin"));
+app.use("/admin", require("./routes/admin"));      // ✅ ONLY ONCE
 app.use("/members", require("./routes/members"));
 app.use("/funds", require("./routes/funds"));
 app.use("/treasurer", require("./routes/treasurer"));

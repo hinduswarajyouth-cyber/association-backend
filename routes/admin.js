@@ -148,46 +148,6 @@ router.put(
 );
 
 /* =====================================================
-   ✏️ EDIT ASSOCIATION ID
-===================================================== */
-router.put(
-  "/edit-association-id/:id",
-  verifyToken,
-  checkRole(...ADMIN_ROLES),
-  async (req, res) => {
-    try {
-      const userId = Number(req.params.id);
-      const { username } = req.body;
-
-      if (userId === req.user.id)
-        return res.status(400).json({ error: "You cannot edit your own ID" });
-
-      if (!username || !username.endsWith("@hsy.org"))
-        return res.status(400).json({ error: "Invalid Association ID" });
-
-      const exists = await pool.query(
-        "SELECT id FROM users WHERE username=$1 AND id<>$2",
-        [username.toLowerCase(), userId]
-      );
-
-      if (exists.rowCount)
-        return res.status(409).json({ error: "Association ID already exists" });
-
-      await pool.query("UPDATE users SET username=$1 WHERE id=$2", [
-        username.toLowerCase(),
-        userId,
-      ]);
-
-      await logAudit("EDIT_ASSOCIATION_ID", "USER", userId, req.user.id);
-      res.json({ message: "Association ID updated successfully" });
-    } catch (err) {
-      console.error("EDIT ASSOCIATION ID ERROR 👉", err.message);
-      res.status(500).json({ error: "Update failed" });
-    }
-  }
-);
-
-/* =====================================================
    📧 RESEND LOGIN
 ===================================================== */
 router.post(
@@ -296,7 +256,39 @@ router.delete(
 );
 
 /* =====================================================
-   📊 ADMIN DASHBOARD (SAFE – NO TABLE CRASH)
+   🧾 AUDIT LOGS – ADMIN / PRESIDENT
+===================================================== */
+router.get(
+  "/audit-logs",
+  verifyToken,
+  checkRole(ROLES.SUPER_ADMIN, ROLES.PRESIDENT),
+  async (req, res) => {
+    try {
+      const result = await pool.query(`
+        SELECT
+          al.id,
+          al.action,
+          al.entity,
+          al.entity_id,
+          al.metadata,
+          al.created_at,
+          u.name AS performed_by
+        FROM audit_logs al
+        LEFT JOIN users u ON u.id = al.performed_by
+        ORDER BY al.created_at DESC
+        LIMIT 200
+      `);
+
+      res.json({ logs: result.rows });
+    } catch (err) {
+      console.error("AUDIT LOGS ERROR 👉", err.message);
+      res.status(500).json({ error: "Failed to fetch audit logs" });
+    }
+  }
+);
+
+/* =====================================================
+   📊 ADMIN DASHBOARD
 ===================================================== */
 router.get(
   "/dashboard",
