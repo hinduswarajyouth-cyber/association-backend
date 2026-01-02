@@ -1,5 +1,5 @@
 const express = require("express");
-const bcrypt = require("bcrypt"); // ✅ ONLY bcrypt
+const bcrypt = require("bcryptjs"); // ✅ ONLY bcrypt
 const jwt = require("jsonwebtoken");
 const pool = require("../db");
 const verifyToken = require("../middleware/verifyToken");
