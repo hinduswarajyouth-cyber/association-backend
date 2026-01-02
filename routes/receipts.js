@@ -9,7 +9,7 @@ const verifyToken = require("../middleware/verifyToken");
 const rateLimit = require("express-rate-limit");
 
 /* =========================
-   🔐 RATE LIMIT (VERIFY ONLY)
+   🔐 RATE LIMIT (PUBLIC VERIFY)
 ========================= */
 const verifyLimiter = rateLimit({
   windowMs: 10 * 60 * 1000,
@@ -27,8 +27,12 @@ function amountToWords(num) {
   const inWords = (n) => {
     if (n < 20) return a[n];
     if (n < 100) return b[Math.floor(n / 10)] + (n % 10 ? " " + a[n % 10] : "");
-    if (n < 1000) return a[Math.floor(n / 100)] + " Hundred" + (n % 100 ? " " + inWords(n % 100) : "");
-    if (n < 100000) return inWords(Math.floor(n / 1000)) + " Thousand" + (n % 1000 ? " " + inWords(n % 1000) : "");
+    if (n < 1000)
+      return a[Math.floor(n / 100)] + " Hundred" +
+        (n % 100 ? " " + inWords(n % 100) : "");
+    if (n < 100000)
+      return inWords(Math.floor(n / 1000)) + " Thousand" +
+        (n % 1000 ? " " + inWords(n % 1000) : "");
     return "";
   };
 
@@ -126,7 +130,7 @@ router.get("/pdf/:receiptNo", verifyToken, async (req, res) => {
     const r = result.rows[0];
     const amountWords = amountToWords(r.amount);
 
-    /* ===== FINAL QR URL ===== */
+    /* ===== FINAL QR URL (NO LOCALHOST) ===== */
     const verifyUrl = `${process.env.BASE_URL}/receipts/verify/${receiptNo}`;
 
     const qrBuffer = Buffer.from(
@@ -143,12 +147,44 @@ router.get("/pdf/:receiptNo", verifyToken, async (req, res) => {
     const logoPath = path.join(__dirname, "../assets/logo.png");
     if (fs.existsSync(logoPath)) doc.image(logoPath, 50, 40, { width: 85 });
 
-    doc.fontSize(16).text("HINDUSWARAJ YOUTH WELFARE ASSOCIATION", 150, 50, { align:"center" });
-    doc.moveDown(2).fontSize(14).text("OFFICIAL PAYMENT RECEIPT", { align:"center" });
+    doc
+      .font("Helvetica-Bold")
+      .fontSize(16)
+      .fillColor("#0d47a1")
+      .text("HINDUSWARAJ YOUTH WELFARE ASSOCIATION", 150, 50, {
+        width: 420,
+        align: "center",
+      });
 
-    doc.image(qrBuffer, 380, 200, { width: 120 });
+    doc.moveDown(2)
+      .fontSize(14)
+      .fillColor("#c9a227")
+      .text("OFFICIAL PAYMENT RECEIPT", { align: "center" });
+
+    doc.fontSize(11).fillColor("black");
+    doc.text(`Receipt No: ${r.receipt_no}`, 80, 200);
+    doc.text(`Member: ${r.member_name}`, 80, 225);
+    doc.text(`Fund: ${r.fund_name}`, 80, 250);
+    doc.text(`Amount: Rs. ${Number(r.amount).toFixed(2)}`, 80, 275);
+    doc.text(`In Words: ${amountWords}`, 80, 300);
+    doc.text(`Date: ${new Date(r.receipt_date).toDateString()}`, 80, 325);
+
+    doc.fontSize(10)
+      .fillColor("#0d47a1")
+      .text("Scan QR to verify receipt", 360, 200, { width: 160, align: "center" });
+
+    doc.image(qrBuffer, 380, 225, { width: 120 });
+
+    doc.fontSize(9)
+      .fillColor("gray")
+      .text(
+        "This is a system generated receipt. No signature required.",
+        50,
+        750,
+        { width: 500, align: "center" }
+      );
+
     doc.end();
-
   } catch (err) {
     console.error(err);
     res.status(500).send("Server error");
