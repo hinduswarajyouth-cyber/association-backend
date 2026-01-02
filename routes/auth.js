@@ -1,5 +1,5 @@
 const express = require("express");
-const bcrypt = require("bcryptjs");
+const bcrypt = require("bcrypt"); // ✅ ONLY bcrypt
 const jwt = require("jsonwebtoken");
 const pool = require("../db");
 const verifyToken = require("../middleware/verifyToken");
@@ -35,8 +35,8 @@ router.post("/register", async (req, res) => {
 
     const result = await pool.query(
       `INSERT INTO users
-       (name, username, personal_email, password, role, is_first_login)
-       VALUES ($1,$2,$3,$4,'SUPER_ADMIN',false)
+       (name, username, personal_email, password, role, is_first_login, active, status)
+       VALUES ($1,$2,$3,$4,'SUPER_ADMIN',false,true,'ACTIVE')
        RETURNING id,name,username,role,is_first_login`,
       [name, username, personal_email || null, hashedPassword]
     );
@@ -52,12 +52,11 @@ router.post("/register", async (req, res) => {
 });
 
 /* =========================
-   🔑 LOGIN (EMAIL OR USERNAME – FIXED)
+   🔑 LOGIN (USERNAME / EMAIL)
 ========================= */
 router.post("/login", async (req, res) => {
   try {
     const { email, username, password } = req.body;
-
     const loginId = email || username;
 
     if (!loginId || !password) {
@@ -79,12 +78,13 @@ router.post("/login", async (req, res) => {
 
     const user = result.rows[0];
 
-    if (user.active === false) {
+    if (!user.active) {
       return res.status(403).json({ error: "Account is deactivated" });
     }
 
-    const match = await bcrypt.compare(password, user.password);
-    if (!match) {
+    // ✅ CORRECT bcrypt compare
+    const isMatch = await bcrypt.compare(password, user.password);
+    if (!isMatch) {
       return res.status(401).json({ error: "Invalid credentials" });
     }
 
@@ -136,7 +136,6 @@ router.post("/forgot-password", async (req, res) => {
     }
 
     const user = userResult.rows[0];
-
     if (!user.personal_email) {
       return res.status(400).json({ error: "No email registered" });
     }
@@ -159,53 +158,6 @@ router.post("/forgot-password", async (req, res) => {
     res.json({ message: "OTP sent to registered email" });
   } catch (err) {
     console.error("FORGOT PASSWORD ERROR 👉", err);
-    res.status(500).json({ error: "Server error" });
-  }
-});
-
-/* =========================
-   🔐 VERIFY OTP
-========================= */
-router.post("/verify-otp", async (req, res) => {
-  try {
-    const { username, otp } = req.body;
-
-    if (!username || !otp) {
-      return res.status(400).json({ error: "Username and OTP required" });
-    }
-
-    const userResult = await pool.query(
-      "SELECT id FROM users WHERE username=$1",
-      [username]
-    );
-
-    if (!userResult.rowCount) {
-      return res.status(404).json({ error: "User not found" });
-    }
-
-    const otpResult = await pool.query(
-      `SELECT otp_hash
-       FROM password_resets
-       WHERE user_id=$1
-         AND used=false
-         AND expires_at > NOW()
-       ORDER BY created_at DESC
-       LIMIT 1`,
-      [userResult.rows[0].id]
-    );
-
-    if (!otpResult.rowCount) {
-      return res.status(400).json({ error: "OTP expired or invalid" });
-    }
-
-    const valid = await bcrypt.compare(otp, otpResult.rows[0].otp_hash);
-    if (!valid) {
-      return res.status(401).json({ error: "Invalid OTP" });
-    }
-
-    res.json({ message: "OTP verified successfully" });
-  } catch (err) {
-    console.error("VERIFY OTP ERROR 👉", err);
     res.status(500).json({ error: "Server error" });
   }
 });
@@ -256,7 +208,7 @@ router.post("/reset-password", async (req, res) => {
 });
 
 /* =========================
-   ✅ VERIFY TOKEN
+   🔐 VERIFY TOKEN
 ========================= */
 router.get("/verify", verifyToken, (req, res) => {
   res.json({ message: "Token valid", user: req.user });

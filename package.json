@@ -1,7 +1,7 @@
 {
   "name": "association-backend",
   "version": "1.0.0",
-    "description": "Association Management System Backend",
+  "description": "Association Management System Backend",
   "main": "index.js",
   "scripts": {
     "start": "node index.js",
@@ -9,7 +9,6 @@
   },
   "dependencies": {
     "bcrypt": "^5.1.1",
-    "bcryptjs": "^3.0.3",
     "cors": "^2.8.5",
     "dotenv": "^16.4.5",
     "express": "^4.19.2",
@@ -20,7 +19,8 @@
     "nodemailer": "^7.0.12",
     "pdfkit": "^0.15.0",
     "pg": "^8.11.3",
-    "qrcode": "^1.5.4"
+    "qrcode": "^1.5.4",
+    "resend": "^6.6.0"
   },
   "devDependencies": {
     "nodemon": "^3.1.0"

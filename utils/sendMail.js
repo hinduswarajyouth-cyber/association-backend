@@ -1,26 +1,27 @@
-const nodemailer = require("nodemailer");
+const { Resend } = require("resend");
 
-const transporter = nodemailer.createTransport({
-  host: process.env.MAIL_HOST,
-  port: Number(process.env.MAIL_PORT),
-  secure: false,
-  auth: {
-    user: process.env.MAIL_USER,
-    pass: process.env.MAIL_PASS,
-  },
-});
+const resend = new Resend(process.env.RESEND_API_KEY);
 
-transporter.verify(() => {
-  console.log("✅ SMTP READY");
-});
+const sendMail = async (to, subject, html) => {
+  try {
+    const { data, error } = await resend.emails.send({
+      from: "HSY Admin <onboarding@resend.dev>", // ✅ SAFE DEFAULT
+      to: [to],                                  // ✅ array
+      subject,
+      html,
+    });
 
-module.exports = async (to, subject, html) => {
-  const info = await transporter.sendMail({
-    from: `"HSY Admin" <${process.env.MAIL_USER}>`,
-    to,
-    subject,
-    html, // ✅ USE HTML
-  });
+    if (error) {
+      console.error("❌ RESEND ERROR:", error);
+      return false;
+    }
 
-  console.log("📨 MESSAGE ID:", info.messageId);
+    console.log("📨 MAIL SENT ID:", data.id);
+    return true;
+  } catch (err) {
+    console.error("❌ MAIL FAILED:", err.message);
+    return false;
+  }
 };
+
+module.exports = sendMail;
