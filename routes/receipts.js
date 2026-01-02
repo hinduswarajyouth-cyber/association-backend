@@ -6,29 +6,29 @@ const QRCode = require("qrcode");
 const path = require("path");
 const fs = require("fs");
 const verifyToken = require("../middleware/verifyToken");
+const rateLimit = require("express-rate-limit");
+
+/* =========================
+   🔐 RATE LIMIT (VERIFY ONLY)
+========================= */
+const verifyLimiter = rateLimit({
+  windowMs: 10 * 60 * 1000,
+  max: 50,
+});
 
 /* =========================
    🔢 AMOUNT TO WORDS (INDIAN)
 ========================= */
 function amountToWords(num) {
-  const a = [
-    "", "One", "Two", "Three", "Four", "Five", "Six", "Seven",
-    "Eight", "Nine", "Ten", "Eleven", "Twelve", "Thirteen",
-    "Fourteen", "Fifteen", "Sixteen", "Seventeen", "Eighteen",
-    "Nineteen"
-  ];
-  const b = [
-    "", "", "Twenty", "Thirty", "Forty",
-    "Fifty", "Sixty", "Seventy", "Eighty", "Ninety"
-  ];
+  const a = ["", "One","Two","Three","Four","Five","Six","Seven","Eight","Nine",
+    "Ten","Eleven","Twelve","Thirteen","Fourteen","Fifteen","Sixteen","Seventeen","Eighteen","Nineteen"];
+  const b = ["", "", "Twenty","Thirty","Forty","Fifty","Sixty","Seventy","Eighty","Ninety"];
 
   const inWords = (n) => {
     if (n < 20) return a[n];
     if (n < 100) return b[Math.floor(n / 10)] + (n % 10 ? " " + a[n % 10] : "");
-    if (n < 1000)
-      return a[Math.floor(n / 100)] + " Hundred" + (n % 100 ? " " + inWords(n % 100) : "");
-    if (n < 100000)
-      return inWords(Math.floor(n / 1000)) + " Thousand" + (n % 1000 ? " " + inWords(n % 1000) : "");
+    if (n < 1000) return a[Math.floor(n / 100)] + " Hundred" + (n % 100 ? " " + inWords(n % 100) : "");
+    if (n < 100000) return inWords(Math.floor(n / 1000)) + " Thousand" + (n % 1000 ? " " + inWords(n % 1000) : "");
     return "";
   };
 
@@ -38,9 +38,13 @@ function amountToWords(num) {
 /* =====================================================
    🌐 PUBLIC RECEIPT VERIFICATION (QR TARGET)
 ===================================================== */
-router.get("/verify/:receiptNo", async (req, res) => {
+router.get("/verify/:receiptNo", verifyLimiter, async (req, res) => {
   try {
     const { receiptNo } = req.params;
+
+    if (receiptNo.length > 40) {
+      return res.status(400).send("Invalid receipt");
+    }
 
     const result = await pool.query(
       `SELECT c.receipt_no, c.amount, c.receipt_date,
@@ -48,7 +52,9 @@ router.get("/verify/:receiptNo", async (req, res) => {
        FROM contributions c
        JOIN users u ON u.id = c.member_id
        JOIN funds f ON f.id = c.fund_id
-       WHERE c.receipt_no=$1 AND c.status='APPROVED'`,
+       WHERE c.receipt_no=$1
+         AND c.status='APPROVED'
+         AND c.qr_locked = true`,
       [receiptNo]
     );
 
@@ -59,20 +65,33 @@ router.get("/verify/:receiptNo", async (req, res) => {
     const r = result.rows[0];
 
     res.send(`
-      <html>
-        <body style="font-family:Arial;background:#f4f6f8;padding:30px">
-          <div style="background:#fff;padding:25px;border-radius:10px;max-width:520px;margin:auto">
-            <h2 style="color:#0d47a1">✅ Receipt Verified</h2>
-            <p><b>Receipt No:</b> ${r.receipt_no}</p>
-            <p><b>Member:</b> ${r.member_name}</p>
-            <p><b>Fund:</b> ${r.fund_name}</p>
-            <p><b>Amount:</b> Rs. ${Number(r.amount).toFixed(2)}</p>
-            <p><b>Date:</b> ${new Date(r.receipt_date).toDateString()}</p>
-            <hr/>
-            <small>This page verifies receipt authenticity only.</small>
-          </div>
-        </body>
-      </html>
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Receipt Verified</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <style>
+    body { font-family: Arial; background:#f4f6f8; padding:20px; }
+    .card { max-width:420px; margin:auto; background:#fff; padding:24px;
+      border-radius:12px; box-shadow:0 10px 30px rgba(0,0,0,.08); text-align:center; }
+    h2 { color:#0d47a1; }
+    p { margin:6px 0; }
+    small { color:#666; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h2>✅ Receipt Verified</h2>
+    <p><b>Receipt No:</b> ${r.receipt_no}</p>
+    <p><b>Member:</b> ${r.member_name}</p>
+    <p><b>Fund:</b> ${r.fund_name}</p>
+    <p><b>Amount:</b> Rs. ${Number(r.amount).toFixed(2)}</p>
+    <p><b>Date:</b> ${new Date(r.receipt_date).toDateString()}</p>
+    <hr/>
+    <small>This page verifies receipt authenticity only.</small>
+  </div>
+</body>
+</html>
     `);
   } catch (err) {
     console.error(err);
@@ -95,7 +114,8 @@ router.get("/pdf/:receiptNo", verifyToken, async (req, res) => {
        JOIN funds f ON f.id = c.fund_id
        WHERE c.receipt_no=$1
          AND c.member_id=$2
-         AND c.status='APPROVED'`,
+         AND c.status='APPROVED'
+         AND c.qr_locked = true`,
       [receiptNo, req.user.id]
     );
 
@@ -106,9 +126,8 @@ router.get("/pdf/:receiptNo", verifyToken, async (req, res) => {
     const r = result.rows[0];
     const amountWords = amountToWords(r.amount);
 
-    /* ===== QR URL (FINAL & CORRECT) ===== */
-    console.log("QR BASE URL =", process.env.BASE_URL);
-    const verifyUrl = `${process.env.BASE_URL}/verify/${receiptNo}`;
+    /* ===== FINAL QR URL ===== */
+    const verifyUrl = `${process.env.BASE_URL}/receipts/verify/${receiptNo}`;
 
     const qrBuffer = Buffer.from(
       (await QRCode.toDataURL(verifyUrl)).split(",")[1],
@@ -122,68 +141,14 @@ router.get("/pdf/:receiptNo", verifyToken, async (req, res) => {
     doc.pipe(res);
 
     const logoPath = path.join(__dirname, "../assets/logo.png");
+    if (fs.existsSync(logoPath)) doc.image(logoPath, 50, 40, { width: 85 });
 
-    if (fs.existsSync(logoPath)) {
-      doc.image(logoPath, 50, 40, { width: 85 });
-    }
+    doc.fontSize(16).text("HINDUSWARAJ YOUTH WELFARE ASSOCIATION", 150, 50, { align:"center" });
+    doc.moveDown(2).fontSize(14).text("OFFICIAL PAYMENT RECEIPT", { align:"center" });
 
-    doc
-      .font("Helvetica-Bold")
-      .fillColor("#0d47a1")
-      .fontSize(16)
-      .text("HINDUSWARAJ YOUTH WELFARE ASSOCIATION", 150, 50, {
-        width: 420,
-        align: "center",
-      });
-
-    doc
-      .fontSize(10)
-      .fillColor("black")
-      .text("Aravind Nagar, Jagtial – 505327", 150, 82, { width: 420, align: "center" })
-      .text("Reg No: 784/25", 150, 96, { width: 420, align: "center" })
-      .text("Mobile: 8499878425", 150, 110, { width: 420, align: "center" })
-      .text("Email: hinduswarajyouth@gmail.com", 150, 124, { width: 420, align: "center" });
-
-    doc.moveDown(2)
-      .font("Helvetica-Bold")
-      .fillColor("#c9a227")
-      .fontSize(14)
-      .text("OFFICIAL PAYMENT RECEIPT", { align: "center" });
-
-    const startY = doc.y + 20;
-    doc.roundedRect(50, startY, 500, 215, 12).strokeColor("#0d47a1").stroke();
-
-    const row = (label, value, y) => {
-      doc.fontSize(11).fillColor("black").text(label, 80, y);
-      doc.text(":", 220, y);
-      doc.text(value, 235, y);
-    };
-
-    row("Receipt No", r.receipt_no, startY + 25);
-    row("Member Name", r.member_name, startY + 50);
-    row("Fund Name", r.fund_name, startY + 75);
-    row("Amount Paid", `Rs. ${Number(r.amount).toFixed(2)}`, startY + 100);
-    row("Amount (in words)", amountWords, startY + 125);
-    row("Receipt Date", new Date(r.receipt_date).toDateString(), startY + 150);
-
-    doc
-      .fontSize(10)
-      .fillColor("#0d47a1")
-      .text("Scan QR to verify receipt", 360, startY + 30, { width: 160, align: "center" });
-
-    doc.image(qrBuffer, 380, startY + 55, { width: 120 });
-
-    doc
-      .fontSize(9)
-      .fillColor("gray")
-      .text(
-        "This is a system generated receipt. No signature required.",
-        50,
-        750,
-        { width: 500, align: "center" }
-      );
-
+    doc.image(qrBuffer, 380, 200, { width: 120 });
     doc.end();
+
   } catch (err) {
     console.error(err);
     res.status(500).send("Server error");
