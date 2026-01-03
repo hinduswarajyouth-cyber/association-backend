@@ -1,3 +1,4 @@
+const logAudit = require("../utils/auditLogger");
 const express = require("express");
 const bcrypt = require("bcryptjs"); // ✅ ONLY bcrypt
 const jwt = require("jsonwebtoken");

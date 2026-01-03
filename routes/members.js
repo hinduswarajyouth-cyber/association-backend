@@ -14,6 +14,7 @@ const ADMIN_ROLES = ["SUPER_ADMIN", "PRESIDENT"];
 
 /* =====================================================
    👥 GET ALL MEMBERS (ADMIN ONLY)
+   ✅ Includes member_id (Association ID)
 ===================================================== */
 router.get(
   "/",
@@ -24,6 +25,7 @@ router.get(
       const result = await pool.query(
         `SELECT 
            id,
+           member_id,
            name,
            username,
            personal_email,
@@ -45,12 +47,14 @@ router.get(
 
 /* =====================================================
    👤 GET MY PROFILE (ANY LOGGED USER)
+   ✅ Association ID visible (READ ONLY)
 ===================================================== */
 router.get("/profile", verifyToken, async (req, res) => {
   try {
     const result = await pool.query(
       `SELECT
          id,
+         member_id,
          name,
          username,
          personal_email,
@@ -72,6 +76,7 @@ router.get("/profile", verifyToken, async (req, res) => {
 
 /* =====================================================
    ✏️ UPDATE MY PROFILE
+   ❌ member_id & username NOT editable
 ===================================================== */
 router.put("/profile", verifyToken, async (req, res) => {
   try {
@@ -87,7 +92,15 @@ router.put("/profile", verifyToken, async (req, res) => {
            personal_email=$2,
            phone=$3
        WHERE id=$4
-       RETURNING id,name,username,personal_email,phone,role,profile_image`,
+       RETURNING
+         id,
+         member_id,
+         name,
+         username,
+         personal_email,
+         phone,
+         role,
+         profile_image`,
       [name, personal_email || null, phone || null, req.user.id]
     );
 
@@ -107,7 +120,7 @@ router.put("/profile", verifyToken, async (req, res) => {
 router.post(
   "/profile-dp",
   verifyToken,
-  upload.single("dp"), // 🔑 FIELD NAME MUST BE "dp"
+  upload.single("dp"), // field name = dp
   async (req, res) => {
     try {
       if (!req.file) {
@@ -133,12 +146,12 @@ router.post(
 );
 
 /* =====================================================
-   📊 MEMBER DASHBOARD
+   📊 MEMBER DASHBOARD (SELF)
 ===================================================== */
 router.get("/dashboard", verifyToken, async (req, res) => {
   try {
     const profile = await pool.query(
-      `SELECT id, name, username, role
+      `SELECT id, member_id, name, username, role
        FROM users
        WHERE id=$1`,
       [req.user.id]
@@ -164,7 +177,7 @@ router.get("/dashboard", verifyToken, async (req, res) => {
 });
 
 /* =====================================================
-   💰 MEMBER CONTRIBUTIONS
+   💰 MEMBER CONTRIBUTIONS (SELF)
 ===================================================== */
 router.get("/contributions", verifyToken, async (req, res) => {
   try {
