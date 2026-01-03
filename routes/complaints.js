@@ -30,6 +30,14 @@ const OFFICE_ROLES = [
   ROLES.EC_MEMBER,
 ];
 
+const STATUS_FLOW = [
+  "OPEN",
+  "FORWARDED",
+  "IN_PROGRESS",
+  "RESOLVED",
+  "CLOSED",
+];
+
 /* =====================================================
    1️⃣ MEMBER → CREATE COMPLAINT
 ===================================================== */
@@ -55,12 +63,12 @@ router.post(
         [req.user.id, subject, description, priority]
       );
 
-      await logAudit("CREATE", "COMPLAINT", rows[0].id, req.user.id);
+      await logAudit("CREATE", "COMPLAINT", rows[0].id, req.user.name);
 
-      res.status(201).json({ message: "Complaint submitted" });
+      res.status(201).json({ message: "Complaint submitted successfully" });
     } catch (err) {
-      console.error("CREATE COMPLAINT 👉", err.message);
-      res.status(500).json({ error: "Complaint failed" });
+      console.error("CREATE COMPLAINT 👉", err);
+      res.status(500).json({ error: "Complaint creation failed" });
     }
   }
 );
@@ -85,7 +93,7 @@ router.get(
       );
 
       res.json(rows);
-    } catch (err) {
+    } catch {
       res.status(500).json({ error: "Failed to fetch complaints" });
     }
   }
@@ -101,16 +109,14 @@ router.get(
   async (req, res) => {
     try {
       const { rows } = await pool.query(`
-        SELECT
-          c.*,
-          u.name AS member_name
+        SELECT c.*, u.name AS member_name
         FROM complaints c
         JOIN users u ON u.id = c.member_id
         ORDER BY c.created_at DESC
       `);
 
       res.json(rows);
-    } catch (err) {
+    } catch {
       res.status(500).json({ error: "Failed to fetch complaints" });
     }
   }
@@ -145,17 +151,12 @@ router.put(
         [assigned_role, req.user.id, admin_remark || null, complaintId]
       );
 
-      await logAudit(
-        "ASSIGN",
-        "COMPLAINT",
-        complaintId,
-        req.user.id,
-        { assigned_role }
-      );
+      await logAudit("ASSIGN", "COMPLAINT", complaintId, req.user.name, {
+        assigned_role,
+      });
 
       res.json({ message: "Complaint forwarded successfully" });
-    } catch (err) {
-      console.error("ASSIGN ERROR 👉", err.message);
+    } catch {
       res.status(500).json({ error: "Forward failed" });
     }
   }
@@ -196,7 +197,12 @@ router.put(
   checkRole(...OFFICE_ROLES),
   async (req, res) => {
     try {
+      const complaintId = Number(req.params.id);
       const { status, admin_remark } = req.body;
+
+      if (!STATUS_FLOW.includes(status)) {
+        return res.status(400).json({ error: "Invalid status" });
+      }
 
       await pool.query(
         `
@@ -206,18 +212,14 @@ router.put(
           updated_at=NOW()
         WHERE id=$3
         `,
-        [status, admin_remark || null, Number(req.params.id)]
+        [status, admin_remark || null, complaintId]
       );
 
-      await logAudit(
-        "UPDATE",
-        "COMPLAINT",
-        req.params.id,
-        req.user.id,
-        { status }
-      );
+      await logAudit("UPDATE", "COMPLAINT", complaintId, req.user.name, {
+        status,
+      });
 
-      res.json({ message: "Complaint updated" });
+      res.json({ message: "Complaint updated successfully" });
     } catch {
       res.status(500).json({ error: "Update failed" });
     }
@@ -225,44 +227,120 @@ router.put(
 );
 
 /* =====================================================
-   7️⃣ ADMIN → CLOSE COMPLAINT
+   7️⃣ COMPLAINT COMMENTS (ADD)
+===================================================== */
+router.post(
+  "/:id/comment",
+  verifyToken,
+  async (req, res) => {
+    const { comment } = req.body;
+    const complaintId = Number(req.params.id);
+
+    if (!comment) {
+      return res.status(400).json({ error: "Comment required" });
+    }
+
+    await pool.query(
+      `
+      INSERT INTO complaint_comments
+      (complaint_id, comment, created_by)
+      VALUES ($1,$2,$3)
+      `,
+      [complaintId, comment, req.user.name]
+    );
+
+    await logAudit("COMMENT", "COMPLAINT", complaintId, req.user.name);
+
+    res.json({ message: "Comment added" });
+  }
+);
+
+/* =====================================================
+   8️⃣ COMPLAINT COMMENTS (VIEW)
+===================================================== */
+router.get(
+  "/:id/comments",
+  verifyToken,
+  async (req, res) => {
+    const { rows } = await pool.query(
+      `
+      SELECT comment, created_by, created_at
+      FROM complaint_comments
+      WHERE complaint_id=$1
+      ORDER BY created_at ASC
+      `,
+      [Number(req.params.id)]
+    );
+
+    res.json(rows);
+  }
+);
+
+/* =====================================================
+   9️⃣ DASHBOARD STATS (ADMIN)
+===================================================== */
+router.get(
+  "/stats",
+  verifyToken,
+  checkRole(...ADMIN_ROLES),
+  async (req, res) => {
+    const { rows } = await pool.query(`
+      SELECT
+        COUNT(*) FILTER (WHERE status='OPEN') AS open,
+        COUNT(*) FILTER (WHERE status='FORWARDED') AS forwarded,
+        COUNT(*) FILTER (WHERE status='IN_PROGRESS') AS in_progress,
+        COUNT(*) FILTER (WHERE status='RESOLVED') AS resolved,
+        COUNT(*) FILTER (WHERE status='CLOSED') AS closed
+      FROM complaints
+    `);
+
+    res.json(rows[0]);
+  }
+);
+
+/* =====================================================
+   🔟 ADMIN → CLOSE COMPLAINT
 ===================================================== */
 router.put(
   "/close/:id",
   verifyToken,
   checkRole(...ADMIN_ROLES),
   async (req, res) => {
+    const complaintId = Number(req.params.id);
+
     await pool.query(
       `
       UPDATE complaints
       SET status='CLOSED', updated_at=NOW()
       WHERE id=$1
       `,
-      [Number(req.params.id)]
+      [complaintId]
     );
 
-    await logAudit("CLOSE", "COMPLAINT", req.params.id, req.user.id);
+    await logAudit("CLOSE", "COMPLAINT", complaintId, req.user.name);
 
-    res.json({ message: "Complaint closed" });
+    res.json({ message: "Complaint closed successfully" });
   }
 );
 
 /* =====================================================
-   8️⃣ ADMIN → DELETE COMPLAINT
+   1️⃣1️⃣ ADMIN → DELETE COMPLAINT
 ===================================================== */
 router.delete(
   "/delete/:id",
   verifyToken,
   checkRole(...ADMIN_ROLES),
   async (req, res) => {
+    const complaintId = Number(req.params.id);
+
     await pool.query(
       "DELETE FROM complaints WHERE id=$1",
-      [Number(req.params.id)]
+      [complaintId]
     );
 
-    await logAudit("DELETE", "COMPLAINT", req.params.id, req.user.id);
+    await logAudit("DELETE", "COMPLAINT", complaintId, req.user.name);
 
-    res.json({ message: "Complaint deleted" });
+    res.json({ message: "Complaint deleted successfully" });
   }
 );
 
