@@ -9,7 +9,7 @@ const sendMail = require("../utils/sendMail");
 const {
   addMemberTemplate,
   resendLoginTemplate,
-} = require("../utils/mailTemplates");
+} = require("../utils/emailTemplates");
 
 const router = express.Router();
 
@@ -30,6 +30,80 @@ const ROLES = {
 const ALL_ROLES = Object.values(ROLES);
 const ADMIN_ROLES = [ROLES.SUPER_ADMIN, ROLES.PRESIDENT];
 
+/* =====================================================
+   🧾 ADMIN – VIEW ALL SUGGESTIONS
+===================================================== */
+router.get(
+  "/admin/suggestions",
+  verifyToken,
+  checkRole(...ADMIN_ROLES),
+  async (req, res) => {
+    try {
+      const { rows } = await pool.query(`
+        SELECT
+          id,
+          member_id,
+          title,
+          message,
+          type,
+          status,
+          created_at
+        FROM suggestions
+        ORDER BY created_at DESC
+      `);
+
+      res.json({ count: rows.length, suggestions: rows });
+    } catch (err) {
+      console.error("GET SUGGESTIONS ERROR 👉", err.message);
+      res.status(500).json({ error: "Failed to load suggestions" });
+    }
+  }
+);
+
+/* =====================================================
+   🔁 ADMIN – UPDATE SUGGESTION STATUS
+===================================================== */
+router.put(
+  "/admin/suggestions/:id/status",
+  verifyToken,
+  checkRole(...ADMIN_ROLES),
+  async (req, res) => {
+    try {
+      const { status } = req.body;
+      const suggestionId = Number(req.params.id);
+
+      if (!status) {
+        return res.status(400).json({ error: "Status is required" });
+      }
+
+      const result = await pool.query(
+        `UPDATE suggestions
+         SET status=$1
+         WHERE id=$2
+         RETURNING id`,
+        [status, suggestionId]
+      );
+
+      if (!result.rowCount) {
+        return res.status(404).json({ error: "Suggestion not found" });
+      }
+
+      await logAudit(
+        "UPDATE_SUGGESTION_STATUS",
+        "SUGGESTION",
+        suggestionId,
+        req.user.id,
+        { status }
+      );
+
+      res.json({ message: "Suggestion status updated successfully" });
+    } catch (err) {
+      console.error("UPDATE SUGGESTION ERROR 👉", err.message);
+      res.status(500).json({ error: "Failed to update status" });
+    }
+  }
+);
+
 /* =========================
    🆔 MEMBER ID GENERATOR
 ========================= */
@@ -46,10 +120,9 @@ async function generateMemberId(client) {
     [`${prefix}%`]
   );
 
-  let next = 1;
-  if (last.rowCount) {
-    next = Number(last.rows[0].member_id.split("/").pop()) + 1;
-  }
+  const next = last.rowCount
+    ? Number(last.rows[0].member_id.split("/").pop()) + 1
+    : 1;
 
   return prefix + String(next).padStart(4, "0");
 }
@@ -97,23 +170,15 @@ router.post(
 
       const memberId = await generateMemberId(client);
       const username = await generateUsername(name);
-      const rawPassword = Math.random().toString(36).slice(-8);
-      const hashedPassword = await bcrypt.hash(rawPassword, 10);
+      const password = Math.random().toString(36).slice(-8);
+      const hashed = await bcrypt.hash(password, 10);
 
       const { rows } = await client.query(
         `INSERT INTO users
          (member_id,name,username,personal_email,phone,password,role,is_first_login,active)
          VALUES ($1,$2,$3,$4,$5,$6,$7,true,true)
          RETURNING id`,
-        [
-          memberId,
-          name,
-          username,
-          personal_email || null,
-          phone || null,
-          hashedPassword,
-          role,
-        ]
+        [memberId, name, username, personal_email || null, phone || null, hashed, role]
       );
 
       await client.query("COMMIT");
@@ -122,185 +187,19 @@ router.post(
         await sendMail(
           personal_email,
           "Welcome to HSY Association",
-          addMemberTemplate({
-            name,
-            username,
-            password: rawPassword,
-            memberId,
-          })
+          addMemberTemplate({ name, username, password, memberId })
         );
       }
 
       await logAudit("CREATE_MEMBER", "USER", rows[0].id, req.user.id);
 
-      res.status(201).json({
-        message: "Member added successfully",
-        memberId,
-        username,
-      });
+      res.status(201).json({ message: "Member added", memberId, username });
     } catch (err) {
       await client.query("ROLLBACK");
       console.error("ADD MEMBER ERROR 👉", err.message);
       res.status(500).json({ error: "Add member failed" });
     } finally {
       client.release();
-    }
-  }
-);
-
-/* =====================================================
-   ✏️ EDIT MEMBER
-===================================================== */
-router.put(
-  "/edit-member/:id",
-  verifyToken,
-  checkRole(...ADMIN_ROLES),
-  async (req, res) => {
-    try {
-      const userId = Number(req.params.id);
-      const { name, personal_email, phone, role, active } = req.body;
-
-      if (userId === req.user.id)
-        return res.status(400).json({ error: "Cannot edit self" });
-
-      if (role && !ALL_ROLES.includes(role))
-        return res.status(400).json({ error: "Invalid role" });
-
-      const result = await pool.query(
-        `UPDATE users SET
-          name=COALESCE($1,name),
-          personal_email=COALESCE($2,personal_email),
-          phone=COALESCE($3,phone),
-          role=COALESCE($4,role),
-          active=COALESCE($5,active)
-         WHERE id=$6
-         RETURNING id`,
-        [
-          name || null,
-          personal_email || null,
-          phone || null,
-          role || null,
-          typeof active === "boolean" ? active : null,
-          userId,
-        ]
-      );
-
-      if (!result.rowCount)
-        return res.status(404).json({ error: "User not found" });
-
-      await logAudit("EDIT_MEMBER", "USER", userId, req.user.id, req.body);
-      res.json({ message: "Member updated successfully" });
-    } catch (err) {
-      console.error("EDIT MEMBER ERROR 👉", err.message);
-      res.status(500).json({ error: "Edit failed" });
-    }
-  }
-);
-
-/* =====================================================
-   📧 RESEND LOGIN
-===================================================== */
-router.post(
-  "/resend-login/:id",
-  verifyToken,
-  checkRole(...ADMIN_ROLES),
-  async (req, res) => {
-    try {
-      const userId = Number(req.params.id);
-
-      const { rows } = await pool.query(
-        "SELECT name,username,personal_email FROM users WHERE id=$1",
-        [userId]
-      );
-
-      if (!rows.length)
-        return res.status(404).json({ error: "User not found" });
-
-      const rawPassword = Math.random().toString(36).slice(-8);
-      const hashedPassword = await bcrypt.hash(rawPassword, 10);
-
-      await pool.query(
-        "UPDATE users SET password=$1,is_first_login=true WHERE id=$2",
-        [hashedPassword, userId]
-      );
-
-      if (rows[0].personal_email) {
-        await sendMail(
-          rows[0].personal_email,
-          "Login Credentials – HSY Association",
-          resendLoginTemplate({
-            name: rows[0].name,
-            username: rows[0].username,
-            password: rawPassword,
-          })
-        );
-      }
-
-      await logAudit("RESEND_LOGIN", "USER", userId, req.user.id);
-      res.json({ message: "Login credentials resent" });
-    } catch (err) {
-      console.error("RESEND LOGIN ERROR 👉", err.message);
-      res.status(500).json({ error: "Resend failed" });
-    }
-  }
-);
-
-/* =====================================================
-   🔒 BLOCK / UNBLOCK
-===================================================== */
-router.put(
-  "/block-member/:id",
-  verifyToken,
-  checkRole(...ADMIN_ROLES),
-  async (req, res) => {
-    const userId = Number(req.params.id);
-
-    await pool.query("UPDATE users SET active=$1 WHERE id=$2", [
-      req.body.active,
-      userId,
-    ]);
-
-    await logAudit(
-      req.body.active ? "UNBLOCK_USER" : "BLOCK_USER",
-      "USER",
-      userId,
-      req.user.id
-    );
-
-    res.json({ message: "Status updated" });
-  }
-);
-
-/* =====================================================
-   🗑️ DELETE MEMBER
-===================================================== */
-router.delete(
-  "/delete-member/:id",
-  verifyToken,
-  checkRole(...ADMIN_ROLES),
-  async (req, res) => {
-    try {
-      const userId = Number(req.params.id);
-
-      const { rows } = await pool.query(
-        "SELECT role FROM users WHERE id=$1",
-        [userId]
-      );
-
-      if (!rows.length)
-        return res.status(404).json({ error: "User not found" });
-
-      if (rows[0].role === ROLES.SUPER_ADMIN)
-        return res.status(403).json({ error: "Cannot delete Super Admin" });
-
-      await pool.query("DELETE FROM contributions WHERE member_id=$1", [userId]);
-      await pool.query("DELETE FROM users WHERE id=$1", [userId]);
-
-      await logAudit("DELETE_MEMBER", "USER", userId, req.user.id);
-      res.json({ message: "Member deleted permanently" });
-    } catch (err) {
-      console.error("DELETE MEMBER ERROR 👉", err.message);
-      res.status(500).json({ error: "Delete failed" });
     }
   }
 );
@@ -326,33 +225,21 @@ router.get(
         "SELECT COUNT(*) FROM users WHERE active=true"
       );
 
-      let approved = { rows: [{ count: 0, total: 0 }] };
-      let cancelled = { rows: [{ count: 0 }] };
-      let recent = { rows: [] };
+      const approved = await pool.query(`
+        SELECT COUNT(*) AS count, COALESCE(SUM(amount),0) AS total
+        FROM contributions WHERE status='APPROVED'
+      `);
 
-      const exists = await pool.query(
-        "SELECT to_regclass('public.contributions')"
-      );
+      const cancelled = await pool.query(`
+        SELECT COUNT(*) AS count FROM contributions WHERE status='CANCELLED'
+      `);
 
-      if (exists.rows[0].to_regclass) {
-        approved = await pool.query(`
-          SELECT COUNT(*) AS count, COALESCE(SUM(amount),0) AS total
-          FROM contributions WHERE status='APPROVED'
-        `);
-
-        cancelled = await pool.query(`
-          SELECT COUNT(*) AS count FROM contributions WHERE status='CANCELLED'
-        `);
-
-        recent = await pool.query(`
-          SELECT receipt_no,amount,receipt_date
-          FROM contributions
-          ORDER BY receipt_date DESC
-          LIMIT 5
-        `);
-      }
-
-      await logAudit("VIEW_DASHBOARD", "DASHBOARD", null, req.user.id);
+      const recent = await pool.query(`
+        SELECT receipt_no,amount,receipt_date
+        FROM contributions
+        ORDER BY receipt_date DESC
+        LIMIT 5
+      `);
 
       res.json({
         totalMembers: Number(members.rows[0].count),

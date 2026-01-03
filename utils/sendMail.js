@@ -2,30 +2,33 @@ const { Resend } = require("resend");
 
 /**
  * Initialize Resend with API Key
- * Make sure RESEND_API_KEY is set in Render
+ * Ensure RESEND_API_KEY & MAIL_FROM are set in environment
  */
 const resend = new Resend(process.env.RESEND_API_KEY);
 
 /**
- * Send email using verified domain
+ * Send email using verified domain (supports attachments)
+ *
  * @param {string} to - recipient email
  * @param {string} subject - email subject
  * @param {string} html - email HTML content
- * @returns {boolean}
+ * @param {Array} attachments - optional attachments (PDF, etc.)
+ * @returns {Promise<boolean>}
  */
-const sendMail = async (to, subject, html) => {
+const sendMail = async (to, subject, html, attachments = []) => {
   try {
-    // Basic validation
+    // 🔎 Basic validation
     if (!to || !subject || !html) {
       throw new Error("Missing email parameters");
     }
 
     const { data, error } = await resend.emails.send({
-      from: process.env.MAIL_FROM, // ✅ VERIFIED DOMAIN (MANDATORY)
+      from: process.env.MAIL_FROM, // ✅ verified domain
       to: [to],
       subject,
       html,
-      reply_to: "support@hinduswarajyouth.online", // ✅ optional but recommended
+      attachments, // 📎 PDF / file support
+      reply_to: "support@hinduswarajyouth.online",
     });
 
     if (error) {
@@ -34,7 +37,7 @@ const sendMail = async (to, subject, html) => {
     }
 
     console.log("📨 EMAIL SENT SUCCESSFULLY");
-    console.log("📨 RESEND MESSAGE ID:", data.id);
+    console.log("📨 RESEND MESSAGE ID:", data?.id);
 
     return true;
   } catch (err) {

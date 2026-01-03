@@ -15,17 +15,17 @@ const app = express();
 ========================= */
 app.use(
   helmet({
-    crossOriginResourcePolicy: false, // allow images
+    crossOriginResourcePolicy: false, // allow images/files
   })
 );
 
 /* =========================
-   🌐 CORS (FINAL – PRODUCTION SAFE ✅)
+   🌐 CORS (PRODUCTION SAFE)
 ========================= */
 app.use(
   cors({
     origin: true,        // allow frontend domain dynamically
-    credentials: true,   // allow cookies / auth headers
+    credentials: true,   // allow auth headers
   })
 );
 
@@ -46,7 +46,7 @@ app.use(
 );
 
 /* =========================
-   🗂 STATIC FILES (UPLOADS)
+   🗂 STATIC FILES
 ========================= */
 app.use("/uploads", express.static(path.join(__dirname, "uploads")));
 
@@ -59,17 +59,19 @@ pool
   .catch((err) => console.error("❌ DB error:", err.message));
 
 /* =========================
-   🚏 ROUTES (CLEAN & CORRECT)
+   🚏 ROUTES (FINAL)
 ========================= */
 app.use("/auth", require("./routes/auth"));
-app.use("/admin", require("./routes/admin"));      // ✅ ONLY ONCE
+app.use("/admin", require("./routes/admin"));              // admin + suggestions
 app.use("/members", require("./routes/members"));
 app.use("/funds", require("./routes/funds"));
 app.use("/treasurer", require("./routes/treasurer"));
 app.use("/reports", require("./routes/reports"));
 app.use("/receipts", require("./routes/receipts"));
+
 app.use("/api/complaints", require("./routes/complaints"));
 app.use("/api/meetings", require("./routes/meetings"));
+app.use("/api/announcements", require("./routes/announcements")); // ✅ ADDED
 
 /* =========================
    🏠 ROOT

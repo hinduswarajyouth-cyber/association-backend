@@ -8,7 +8,7 @@ const sendMail = require("../utils/sendMail");
 const {
   forgotPasswordTemplate,
   passwordResetSuccessTemplate,
-} = require("../utils/mailTemplates");
+} = require("../utils/emailTemplates");
 
 const router = express.Router();
 
