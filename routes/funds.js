@@ -9,23 +9,36 @@ const isYearClosed = require("../utils/isYearClosed");
 
 /* =====================================================
    🔹 GET ALL FUNDS (ADMIN / DASHBOARD)
-   GET /funds
+   ✔ Ledger-driven balance
+   ✔ Auditor-safe
 ===================================================== */
 router.get("/", verifyToken, async (req, res) => {
   try {
     const result = await pool.query(`
-      SELECT 
+      SELECT
         f.id,
         f.fund_name,
         f.fund_type,
-        f.balance,
         f.status,
-        COALESCE(SUM(c.amount), 0) AS total_collection
+
+        -- Current balance (ledger = source of truth)
+        COALESCE((
+          SELECT l.balance_after
+          FROM ledger l
+          WHERE l.fund_id = f.id
+          ORDER BY l.created_at DESC
+          LIMIT 1
+        ), 0) AS balance,
+
+        -- Total income (credits only)
+        COALESCE((
+          SELECT SUM(l.amount)
+          FROM ledger l
+          WHERE l.fund_id = f.id
+            AND l.entry_type = 'CREDIT'
+        ), 0) AS total_collection
+
       FROM funds f
-      LEFT JOIN contributions c
-        ON c.fund_id = f.id
-        AND c.status = 'APPROVED'
-      GROUP BY f.id
       ORDER BY f.id DESC
     `);
 
@@ -38,6 +51,7 @@ router.get("/", verifyToken, async (req, res) => {
 
 /* =====================================================
    ➕ ADD FUND (SUPER_ADMIN / PRESIDENT)
+   ⚠️ No balance stored here
 ===================================================== */
 router.post(
   "/",
@@ -45,18 +59,19 @@ router.post(
   checkRole("SUPER_ADMIN", "PRESIDENT"),
   async (req, res) => {
     try {
-      const { fund_name, fund_type, balance, description } = req.body;
+      const { fund_name, fund_type, description } = req.body;
 
-      if (!fund_name || !fund_type || balance === undefined) {
+      if (!fund_name || !fund_type) {
         return res.status(400).json({ error: "Missing required fields" });
       }
 
       const result = await pool.query(
-        `INSERT INTO funds
-         (fund_name, fund_type, balance, description, status)
-         VALUES ($1, $2, $3, $4, 'ACTIVE')
-         RETURNING *`,
-        [fund_name, fund_type, balance, description || null]
+        `
+        INSERT INTO funds (fund_name, fund_type, description, status)
+        VALUES ($1, $2, $3, 'ACTIVE')
+        RETURNING *
+        `,
+        [fund_name, fund_type, description || null]
       );
 
       await logAudit("CREATE", "FUND", result.rows[0].id, req.user.id);
@@ -70,7 +85,8 @@ router.post(
 );
 
 /* =====================================================
-   ✏️ UPDATE FUND
+   ✏️ UPDATE FUND (NAME / TYPE / DESCRIPTION)
+   ❌ No balance updates allowed
 ===================================================== */
 router.put(
   "/:id",
@@ -79,14 +95,19 @@ router.put(
   async (req, res) => {
     try {
       const fundId = Number(req.params.id);
-      const { fund_name, fund_type, balance, description } = req.body;
+      const { fund_name, fund_type, description } = req.body;
 
       const result = await pool.query(
-        `UPDATE funds
-         SET fund_name=$1, fund_type=$2, balance=$3, description=$4
-         WHERE id=$5
-         RETURNING *`,
-        [fund_name, fund_type, balance, description || null, fundId]
+        `
+        UPDATE funds
+        SET
+          fund_name = $1,
+          fund_type = $2,
+          description = $3
+        WHERE id = $4
+        RETURNING *
+        `,
+        [fund_name, fund_type, description || null, fundId]
       );
 
       if (!result.rowCount) {
@@ -115,13 +136,15 @@ router.patch(
       const fundId = Number(req.params.id);
 
       const result = await pool.query(
-        `UPDATE funds
-         SET status = CASE
-           WHEN status='ACTIVE' THEN 'INACTIVE'
-           ELSE 'ACTIVE'
-         END
-         WHERE id=$1
-         RETURNING *`,
+        `
+        UPDATE funds
+        SET status = CASE
+          WHEN status = 'ACTIVE' THEN 'INACTIVE'
+          ELSE 'ACTIVE'
+        END
+        WHERE id = $1
+        RETURNING *
+        `,
         [fundId]
       );
 
@@ -140,16 +163,27 @@ router.patch(
 );
 
 /* =====================================================
-   📋 ACTIVE FUNDS (MEMBER)
-   GET /funds/list
+   📋 ACTIVE FUNDS (MEMBER VIEW)
+   ✔ Ledger-driven balance
 ===================================================== */
 router.get("/list", verifyToken, async (req, res) => {
   try {
     const result = await pool.query(`
-      SELECT id, fund_name, balance
-      FROM funds
-      WHERE status='ACTIVE'
-      ORDER BY fund_name
+      SELECT
+        f.id,
+        f.fund_name,
+
+        COALESCE((
+          SELECT l.balance_after
+          FROM ledger l
+          WHERE l.fund_id = f.id
+          ORDER BY l.created_at DESC
+          LIMIT 1
+        ), 0) AS balance
+
+      FROM funds f
+      WHERE f.status = 'ACTIVE'
+      ORDER BY f.fund_name
     `);
 
     res.json({ funds: result.rows });
@@ -161,7 +195,7 @@ router.get("/list", verifyToken, async (req, res) => {
 
 /* =====================================================
    💰 MEMBER CONTRIBUTION (PENDING)
-   POST /funds/contribute
+   ✔ No ledger write here
 ===================================================== */
 router.post("/contribute", verifyToken, async (req, res) => {
   try {
@@ -181,10 +215,12 @@ router.post("/contribute", verifyToken, async (req, res) => {
     }
 
     const result = await pool.query(
-      `INSERT INTO contributions
-       (fund_id, member_id, amount, payment_mode, reference_no, status)
-       VALUES ($1,$2,$3,$4,$5,'PENDING')
-       RETURNING *`,
+      `
+      INSERT INTO contributions
+      (fund_id, member_id, amount, payment_mode, reference_no, status)
+      VALUES ($1, $2, $3, $4, $5, 'PENDING')
+      RETURNING *
+      `,
       [fund_id, req.user.id, amount, payment_mode, reference_no || null]
     );
 
