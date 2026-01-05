@@ -24,16 +24,14 @@ router.post("/suggestions", verifyToken, async (req, res) => {
 
     await pool.query(
       `
-      INSERT INTO suggestions
-        (member_id, title, message, type)
-      VALUES
-        ($1, $2, $3, $4)
+      INSERT INTO suggestions (member_id, title, message, type)
+      VALUES ($1, $2, $3, $4)
       `,
       [
         req.user.member_id,
         title || null,
         message,
-        type || "GENERAL"
+        type || "GENERAL",
       ]
     );
 
@@ -46,6 +44,7 @@ router.post("/suggestions", verifyToken, async (req, res) => {
 
 /* =====================================================
    👥 GET ALL MEMBERS (ADMIN ONLY)
+   ✅ FROM users TABLE (FINAL FIX)
 ===================================================== */
 router.get(
   "/",
@@ -57,28 +56,25 @@ router.get(
         SELECT
           member_id,
           name,
-          email,
+          username,
+          personal_email,
           phone,
-          address,
-          status
-        FROM members
+          role,
+          active
+        FROM users
+        WHERE role = 'MEMBER'
         ORDER BY member_id
       `);
 
-      const members = result.rows.map(m => {
-        const username = m.email ? m.email.split("@")[0] : "user";
-
-        return {
-          member_id: m.member_id,
-          name: m.name,
-          association_id: `${username}@hsy.org`,
-          personal_email: m.email,
-          phone: m.phone,
-          address: m.address,
-          role: "MEMBER",
-          status: m.status
-        };
-      });
+      const members = result.rows.map(u => ({
+        member_id: u.member_id,
+        name: u.name,
+        association_id: u.username, // already like name@hsy.org
+        personal_email: u.personal_email,
+        phone: u.phone,
+        role: u.role,
+        status: u.active ? "ACTIVE" : "BLOCKED",
+      }));
 
       res.json(members);
     } catch (err) {
@@ -90,6 +86,7 @@ router.get(
 
 /* =====================================================
    👤 GET MY PROFILE (SELF)
+   ✅ FROM users TABLE
 ===================================================== */
 router.get("/profile", verifyToken, async (req, res) => {
   try {
@@ -98,11 +95,12 @@ router.get("/profile", verifyToken, async (req, res) => {
       SELECT
         member_id,
         name,
-        email,
+        username,
+        personal_email,
         phone,
-        address,
-        status
-      FROM members
+        role,
+        active
+      FROM users
       WHERE member_id = $1
       `,
       [req.user.member_id]
@@ -112,18 +110,16 @@ router.get("/profile", verifyToken, async (req, res) => {
       return res.status(404).json({ error: "Profile not found" });
     }
 
-    const m = result.rows[0];
-    const username = m.email ? m.email.split("@")[0] : "user";
+    const u = result.rows[0];
 
     res.json({
-      member_id: m.member_id,
-      name: m.name,
-      association_id: `${username}@hsy.org`,
-      personal_email: m.email,
-      phone: m.phone,
-      address: m.address,
-      role: "MEMBER",
-      status: m.status
+      member_id: u.member_id,
+      name: u.name,
+      association_id: u.username,
+      personal_email: u.personal_email,
+      phone: u.phone,
+      role: u.role,
+      status: u.active ? "ACTIVE" : "BLOCKED",
     });
   } catch (err) {
     console.error("GET PROFILE ERROR 👉", err.message);
@@ -132,11 +128,12 @@ router.get("/profile", verifyToken, async (req, res) => {
 });
 
 /* =====================================================
-   ✏️ UPDATE MY PROFILE
+   ✏️ UPDATE MY PROFILE (SELF)
+   ❌ member_id, username, role NOT editable
 ===================================================== */
 router.put("/profile", verifyToken, async (req, res) => {
   try {
-    const { name, email, phone, address } = req.body;
+    const { name, personal_email, phone } = req.body;
 
     if (!name) {
       return res.status(400).json({ error: "Name is required" });
@@ -144,33 +141,32 @@ router.put("/profile", verifyToken, async (req, res) => {
 
     const result = await pool.query(
       `
-      UPDATE members
+      UPDATE users
       SET
         name = $1,
-        email = $2,
-        phone = $3,
-        address = $4
-      WHERE member_id = $5
+        personal_email = $2,
+        phone = $3
+      WHERE member_id = $4
       RETURNING
         member_id,
         name,
-        email,
+        username,
+        personal_email,
         phone,
-        address,
-        status
+        role,
+        active
       `,
       [
         name,
-        email || null,
+        personal_email || null,
         phone || null,
-        address || null,
-        req.user.member_id
+        req.user.member_id,
       ]
     );
 
     res.json({
       message: "Profile updated successfully",
-      profile: result.rows[0]
+      profile: result.rows[0],
     });
   } catch (err) {
     console.error("UPDATE PROFILE ERROR 👉", err.message);
@@ -188,8 +184,9 @@ router.get("/dashboard", verifyToken, async (req, res) => {
       SELECT
         member_id,
         name,
-        status
-      FROM members
+        role,
+        active
+      FROM users
       WHERE member_id = $1
       `,
       [req.user.member_id]
@@ -208,7 +205,7 @@ router.get("/dashboard", verifyToken, async (req, res) => {
 
     res.json({
       profile: profile.rows[0],
-      stats: stats.rows[0]
+      stats: stats.rows[0],
     });
   } catch (err) {
     console.error("MEMBER DASHBOARD ERROR 👉", err.message);
