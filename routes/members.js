@@ -6,11 +6,6 @@ const checkRole = require("../middleware/checkRole");
 
 const router = express.Router();
 
-/* =========================
-   👑 ADMIN ROLES
-========================= */
-const ADMIN_ROLES = ["SUPER_ADMIN", "PRESIDENT"];
-
 /* =====================================================
    📨 SUBMIT SUGGESTION (MEMBER)
 ===================================================== */
@@ -38,53 +33,41 @@ router.post("/suggestions", verifyToken, async (req, res) => {
 });
 
 /* =====================================================
-   👥 GET ALL MEMBERS (ADMIN ONLY)
-   🎯 FORMAT AS PER YOUR REQUIREMENT
+   👥 GET ALL MEMBERS (REPLACED & FINAL)
 ===================================================== */
 router.get(
-  "/",
+  "/members",
   verifyToken,
-  checkRole(...ADMIN_ROLES),
+  checkRole(
+    "SUPER_ADMIN",
+    "PRESIDENT",
+    "VICE_PRESIDENT",
+    "GENERAL_SECRETARY",
+    "JOINT_SECRETARY",
+    "TREASURER",
+    "EC_MEMBER"
+  ),
   async (req, res) => {
     try {
-      const result = await pool.query(`
+      const { rows } = await pool.query(`
         SELECT
           id,
+          member_id,
           name,
           username,
-          email,
+          personal_email,
           phone,
-          address,
           role,
           active
         FROM users
         WHERE role != 'SUPER_ADMIN'
-        ORDER BY id
+        ORDER BY member_id
       `);
 
-      const members = result.rows.map((u, index) => ({
-        // 🔹 AUTO MEMBER ID (UI ONLY)
-        member_id: `HSY/JGTL/2026/${String(index + 1).padStart(3, "0")}`,
-
-        // 🔹 DATA
-        name: u.name,
-        association_id: u.username,      // name@hsy.org
-        personal_email: u.email,
-        phone: u.phone,
-        address: u.address,
-
-        // 🔹 META
-        role: u.role,
-        status: u.active ? "ACTIVE" : "BLOCKED",
-
-        // 🔹 INTERNAL (FOR ACTIONS)
-        user_id: u.id
-      }));
-
-      res.json(members);
+      res.json(rows);
     } catch (err) {
       console.error("GET MEMBERS ERROR 👉", err.message);
-      res.status(500).json({ error: "Server error" });
+      res.status(500).json({ error: "Failed to load members" });
     }
   }
 );
@@ -94,13 +77,14 @@ router.get(
 ===================================================== */
 router.get("/profile", verifyToken, async (req, res) => {
   try {
-    const result = await pool.query(
+    const { rows } = await pool.query(
       `
       SELECT
         id,
+        member_id,
         name,
         username,
-        email,
+        personal_email,
         phone,
         address,
         role,
@@ -111,22 +95,11 @@ router.get("/profile", verifyToken, async (req, res) => {
       [req.user.id]
     );
 
-    if (result.rows.length === 0) {
+    if (!rows.length) {
       return res.status(404).json({ error: "Profile not found" });
     }
 
-    const u = result.rows[0];
-
-    res.json({
-      member_id: `HSY/JGTL/2026/${String(u.id).padStart(3, "0")}`,
-      name: u.name,
-      association_id: u.username,
-      personal_email: u.email,
-      phone: u.phone,
-      address: u.address,
-      role: u.role,
-      status: u.active ? "ACTIVE" : "BLOCKED"
-    });
+    res.json(rows[0]);
   } catch (err) {
     console.error("GET PROFILE ERROR 👉", err.message);
     res.status(500).json({ error: "Failed to load profile" });
@@ -138,38 +111,32 @@ router.get("/profile", verifyToken, async (req, res) => {
 ===================================================== */
 router.put("/profile", verifyToken, async (req, res) => {
   try {
-    const { name, email, phone, address } = req.body;
+    const { name, personal_email, phone, address } = req.body;
 
     if (!name) {
       return res.status(400).json({ error: "Name is required" });
     }
 
-    const result = await pool.query(
+    await pool.query(
       `
       UPDATE users
       SET
-        name = $1,
-        email = $2,
-        phone = $3,
-        address = $4
-      WHERE id = $5
-      RETURNING
-        id,
-        name,
-        username,
-        email,
-        phone,
-        address,
-        role,
-        active
+        name=$1,
+        personal_email=$2,
+        phone=$3,
+        address=$4
+      WHERE id=$5
       `,
-      [name, email || null, phone || null, address || null, req.user.id]
+      [
+        name,
+        personal_email || null,
+        phone || null,
+        address || null,
+        req.user.id,
+      ]
     );
 
-    res.json({
-      message: "Profile updated successfully",
-      profile: result.rows[0]
-    });
+    res.json({ message: "Profile updated successfully" });
   } catch (err) {
     console.error("UPDATE PROFILE ERROR 👉", err.message);
     res.status(500).json({ error: "Failed to update profile" });
@@ -203,7 +170,7 @@ router.get("/dashboard", verifyToken, async (req, res) => {
 
     res.json({
       profile: profile.rows[0],
-      stats: stats.rows[0]
+      stats: stats.rows[0],
     });
   } catch (err) {
     console.error("MEMBER DASHBOARD ERROR 👉", err.message);
@@ -216,7 +183,7 @@ router.get("/dashboard", verifyToken, async (req, res) => {
 ===================================================== */
 router.get("/contributions", verifyToken, async (req, res) => {
   try {
-    const result = await pool.query(
+    const { rows } = await pool.query(
       `
       SELECT
         id,
@@ -231,7 +198,7 @@ router.get("/contributions", verifyToken, async (req, res) => {
       [req.user.id]
     );
 
-    res.json({ contributions: result.rows });
+    res.json({ contributions: rows });
   } catch (err) {
     console.error("MEMBER CONTRIBUTIONS ERROR 👉", err.message);
     res.status(500).json({ error: "Failed to load contributions" });
