@@ -7,7 +7,7 @@ const checkRole = require("../middleware/checkRole");
 const router = express.Router();
 
 /* =====================================================
-   📨 SUBMIT SUGGESTION (MEMBER)
+   📨 SUBMIT SUGGESTION (MEMBER – SELF)
 ===================================================== */
 router.post("/suggestions", verifyToken, async (req, res) => {
   try {
@@ -33,7 +33,54 @@ router.post("/suggestions", verifyToken, async (req, res) => {
 });
 
 /* =====================================================
-   👥 GET ALL MEMBERS (REPLACED & FINAL)
+   👥 GET ALL MEMBERS (ADMIN – DETAILED VIEW)
+   👉 SUPER_ADMIN, PRESIDENT
+===================================================== */
+router.get(
+  "/",
+  verifyToken,
+  checkRole("SUPER_ADMIN", "PRESIDENT"),
+  async (req, res) => {
+    try {
+      const result = await pool.query(`
+        SELECT
+          id,
+          member_id,
+          name,
+          username,
+          personal_email,
+          phone,
+          address,
+          role,
+          active
+        FROM users
+        WHERE role != 'SUPER_ADMIN'
+        ORDER BY id
+      `);
+
+      res.json(
+        result.rows.map((u) => ({
+          id: u.id,
+          member_id: u.member_id,
+          name: u.name,
+          association_id: u.username,
+          personal_email: u.personal_email,
+          phone: u.phone,
+          address: u.address,
+          role: u.role,
+          active: u.active,
+        }))
+      );
+    } catch (err) {
+      console.error("GET MEMBERS ERROR 👉", err.message);
+      res.status(500).json({ error: "Failed to fetch members" });
+    }
+  }
+);
+
+/* =====================================================
+   👥 GET ALL MEMBERS (LEADERSHIP VIEW)
+   👉 EC / Treasurer / Secretaries
 ===================================================== */
 router.get(
   "/members",
@@ -73,7 +120,7 @@ router.get(
 );
 
 /* =====================================================
-   👤 GET MY PROFILE (SELF)
+   👤 GET MY PROFILE (MEMBER – SELF)
 ===================================================== */
 router.get("/profile", verifyToken, async (req, res) => {
   try {
@@ -107,7 +154,7 @@ router.get("/profile", verifyToken, async (req, res) => {
 });
 
 /* =====================================================
-   ✏️ UPDATE MY PROFILE (SELF)
+   ✏️ UPDATE MY PROFILE (MEMBER – SELF)
 ===================================================== */
 router.put("/profile", verifyToken, async (req, res) => {
   try {
@@ -144,7 +191,7 @@ router.put("/profile", verifyToken, async (req, res) => {
 });
 
 /* =====================================================
-   📊 MEMBER DASHBOARD (SELF)
+   📊 MEMBER DASHBOARD (MEMBER – SELF)
 ===================================================== */
 router.get("/dashboard", verifyToken, async (req, res) => {
   try {
@@ -179,7 +226,7 @@ router.get("/dashboard", verifyToken, async (req, res) => {
 });
 
 /* =====================================================
-   💰 MEMBER CONTRIBUTIONS (SELF)
+   💰 MEMBER CONTRIBUTIONS (MEMBER – SELF)
 ===================================================== */
 router.get("/contributions", verifyToken, async (req, res) => {
   try {
