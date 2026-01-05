@@ -33,57 +33,10 @@ router.post("/suggestions", verifyToken, async (req, res) => {
 });
 
 /* =====================================================
-   👥 GET ALL MEMBERS (ADMIN – DETAILED VIEW)
-   👉 SUPER_ADMIN, PRESIDENT
+   👥 GET ALL MEMBERS (ROLE BASED)
 ===================================================== */
 router.get(
   "/",
-  verifyToken,
-  checkRole("SUPER_ADMIN", "PRESIDENT"),
-  async (req, res) => {
-    try {
-      const result = await pool.query(`
-        SELECT
-          id,
-          member_id,
-          name,
-          username,
-          personal_email,
-          phone,
-          address,
-          role,
-          active
-        FROM users
-        WHERE role != 'SUPER_ADMIN'
-        ORDER BY id
-      `);
-
-      res.json(
-        result.rows.map((u) => ({
-          id: u.id,
-          member_id: u.member_id,
-          name: u.name,
-          association_id: u.username,
-          personal_email: u.personal_email,
-          phone: u.phone,
-          address: u.address,
-          role: u.role,
-          active: u.active,
-        }))
-      );
-    } catch (err) {
-      console.error("GET MEMBERS ERROR 👉", err.message);
-      res.status(500).json({ error: "Failed to fetch members" });
-    }
-  }
-);
-
-/* =====================================================
-   👥 GET ALL MEMBERS (LEADERSHIP VIEW)
-   👉 EC / Treasurer / Secretaries
-===================================================== */
-router.get(
-  "/members",
   verifyToken,
   checkRole(
     "SUPER_ADMIN",
@@ -104,6 +57,7 @@ router.get(
           username,
           personal_email,
           phone,
+          address,
           role,
           active
         FROM users
@@ -114,13 +68,13 @@ router.get(
       res.json(rows);
     } catch (err) {
       console.error("GET MEMBERS ERROR 👉", err.message);
-      res.status(500).json({ error: "Failed to load members" });
+      res.status(500).json({ error: "Failed to fetch members" });
     }
   }
 );
 
 /* =====================================================
-   👤 GET MY PROFILE (MEMBER – SELF)
+   👤 GET MY PROFILE (SELF)
 ===================================================== */
 router.get("/profile", verifyToken, async (req, res) => {
   try {
@@ -154,7 +108,7 @@ router.get("/profile", verifyToken, async (req, res) => {
 });
 
 /* =====================================================
-   ✏️ UPDATE MY PROFILE (MEMBER – SELF)
+   ✏️ UPDATE MY PROFILE (SELF)
 ===================================================== */
 router.put("/profile", verifyToken, async (req, res) => {
   try {
@@ -168,11 +122,11 @@ router.put("/profile", verifyToken, async (req, res) => {
       `
       UPDATE users
       SET
-        name=$1,
-        personal_email=$2,
-        phone=$3,
-        address=$4
-      WHERE id=$5
+        name = $1,
+        personal_email = $2,
+        phone = $3,
+        address = $4
+      WHERE id = $5
       `,
       [
         name,
@@ -191,7 +145,7 @@ router.put("/profile", verifyToken, async (req, res) => {
 });
 
 /* =====================================================
-   📊 MEMBER DASHBOARD (MEMBER – SELF)
+   📊 MEMBER DASHBOARD (SELF)
 ===================================================== */
 router.get("/dashboard", verifyToken, async (req, res) => {
   try {
@@ -226,7 +180,7 @@ router.get("/dashboard", verifyToken, async (req, res) => {
 });
 
 /* =====================================================
-   💰 MEMBER CONTRIBUTIONS (MEMBER – SELF)
+   💰 MEMBER CONTRIBUTIONS (SELF)
 ===================================================== */
 router.get("/contributions", verifyToken, async (req, res) => {
   try {
