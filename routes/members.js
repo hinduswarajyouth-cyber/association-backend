@@ -34,8 +34,7 @@ router.post("/suggestions", verifyToken, async (req, res) => {
 
 /* =====================================================
    👥 GET ALL MEMBERS (ROLE BASED)
-   👉 USED BY /members PAGE
-   🔥 FIXED: ORDER BY created_at (shows ALL members)
+   ✅ SHOWS ALL USERS INCLUDING SUPER_ADMIN
 ===================================================== */
 router.get(
   "/",
@@ -63,17 +62,15 @@ router.get(
           role,
           active
         FROM users
-        WHERE role != 'SUPER_ADMIN'
         ORDER BY created_at ASC
       `);
 
-      // ✅ map DB → frontend contract
       res.json(
         rows.map((u) => ({
           id: u.id,
-          member_id: u.member_id,
+          member_id: u.member_id,          // HSY/JGTL/2026/0001
           name: u.name,
-          association_id: u.username,
+          association_id: u.username,      // name@hsy.org
           personal_email: u.personal_email,
           phone: u.phone,
           address: u.address,
@@ -89,7 +86,7 @@ router.get(
 );
 
 /* =====================================================
-   👤 GET MY PROFILE (MEMBER – SELF)
+   👤 GET MY PROFILE (SELF)
 ===================================================== */
 router.get("/profile", verifyToken, async (req, res) => {
   try {
@@ -123,7 +120,7 @@ router.get("/profile", verifyToken, async (req, res) => {
 });
 
 /* =====================================================
-   ✏️ UPDATE MY PROFILE (MEMBER – SELF)
+   ✏️ UPDATE MY PROFILE (SELF)
 ===================================================== */
 router.put("/profile", verifyToken, async (req, res) => {
   try {
@@ -160,7 +157,7 @@ router.put("/profile", verifyToken, async (req, res) => {
 });
 
 /* =====================================================
-   📊 MEMBER DASHBOARD (MEMBER – SELF)
+   📊 MEMBER DASHBOARD (SELF)
 ===================================================== */
 router.get("/dashboard", verifyToken, async (req, res) => {
   try {
@@ -195,7 +192,7 @@ router.get("/dashboard", verifyToken, async (req, res) => {
 });
 
 /* =====================================================
-   💰 MEMBER CONTRIBUTIONS (MEMBER – SELF)
+   💰 MEMBER CONTRIBUTIONS (SELF)
 ===================================================== */
 router.get("/contributions", verifyToken, async (req, res) => {
   try {
