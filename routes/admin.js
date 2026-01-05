@@ -29,17 +29,15 @@ const ROLES = {
 };
 
 const ALL_ROLES = Object.values(ROLES);
-
 const ADMIN_ROLES = [ROLES.SUPER_ADMIN, ROLES.PRESIDENT];
-
 const DASHBOARD_ROLES = [
   ROLES.SUPER_ADMIN,
   ROLES.PRESIDENT,
   ROLES.VICE_PRESIDENT,
   ROLES.GENERAL_SECRETARY,
   ROLES.JOINT_SECRETARY,
-  ROLES.EC_MEMBER,
   ROLES.TREASURER,
+  ROLES.EC_MEMBER,
 ];
 
 /* =========================
@@ -105,6 +103,7 @@ router.get(
           username,
           personal_email,
           phone,
+          address,
           role,
           active
         FROM users
@@ -147,7 +146,7 @@ router.post(
       const { rows } = await client.query(
         `
         INSERT INTO users
-          (member_id,name,username,personal_email,phone,address,password,role,is_first_login,active)
+          (member_id, name, username, personal_email, phone, address, password, role, is_first_login, active)
         VALUES
           ($1,$2,$3,$4,$5,$6,$7,$8,true,true)
         RETURNING id
@@ -192,28 +191,43 @@ router.post(
 );
 
 /* =====================================================
-   ✏️ EDIT MEMBER
+   ✏️ EDIT MEMBER (FINAL)
 ===================================================== */
 router.put(
   "/edit-member/:id",
   verifyToken,
-  checkRole(...ADMIN_ROLES),
+  checkRole(ROLES.SUPER_ADMIN, ROLES.PRESIDENT),
   async (req, res) => {
     try {
-      const { name, personal_email, phone, role, active } = req.body;
+      const { name, personal_email, phone, address, role, active } = req.body;
 
       const result = await pool.query(
         `
         UPDATE users
-        SET name=$1, personal_email=$2, phone=$3, role=$4, active=$5
-        WHERE id=$6
+        SET
+          name=$1,
+          personal_email=$2,
+          phone=$3,
+          address=$4,
+          role=$5,
+          active=$6
+        WHERE id=$7
         RETURNING id
         `,
-        [name, personal_email, phone, role, active, req.params.id]
+        [
+          name,
+          personal_email || null,
+          phone || null,
+          address || null,
+          role,
+          active,
+          req.params.id,
+        ]
       );
 
-      if (!result.rowCount)
+      if (!result.rowCount) {
         return res.status(404).json({ error: "Member not found" });
+      }
 
       await logAudit("EDIT_MEMBER", "USER", req.params.id, req.user.id);
 
@@ -317,9 +331,7 @@ router.delete(
   checkRole(ROLES.SUPER_ADMIN),
   async (req, res) => {
     try {
-      await pool.query("DELETE FROM users WHERE id=$1", [
-        req.params.id,
-      ]);
+      await pool.query("DELETE FROM users WHERE id=$1", [req.params.id]);
 
       await logAudit("DELETE_MEMBER", "USER", req.params.id, req.user.id);
 
@@ -349,7 +361,8 @@ router.get(
         pool.query("SELECT COUNT(*) FROM users WHERE active=true"),
         pool.query(`
           SELECT COUNT(*) AS count, COALESCE(SUM(amount),0) AS total
-          FROM contributions WHERE status='APPROVED'
+          FROM contributions
+          WHERE status='APPROVED'
         `),
         pool.query(
           "SELECT COUNT(*) FROM contributions WHERE status='CANCELLED'"
