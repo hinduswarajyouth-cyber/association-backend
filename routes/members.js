@@ -34,6 +34,7 @@ router.post("/suggestions", verifyToken, async (req, res) => {
 
 /* =====================================================
    👥 GET ALL MEMBERS (ROLE BASED)
+   👉 USED BY /members PAGE
 ===================================================== */
 router.get(
   "/",
@@ -65,7 +66,20 @@ router.get(
         ORDER BY member_id
       `);
 
-      res.json(rows);
+      // 🔥 IMPORTANT: map DB → frontend contract
+      res.json(
+        rows.map((u) => ({
+          id: u.id,
+          member_id: u.member_id,
+          name: u.name,
+          association_id: u.username, // ✅ frontend expects this
+          personal_email: u.personal_email,
+          phone: u.phone,
+          address: u.address,
+          role: u.role,
+          active: u.active,
+        }))
+      );
     } catch (err) {
       console.error("GET MEMBERS ERROR 👉", err.message);
       res.status(500).json({ error: "Failed to fetch members" });
