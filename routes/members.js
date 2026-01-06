@@ -7,7 +7,7 @@ const sendMail = require("../utils/sendMail");
 const router = express.Router();
 
 /* =====================================================
-   1️⃣ GET ALL MEMBERS (ADMIN / PRESIDENT)
+   1️⃣ GET ALL MEMBERS (SUPER_ADMIN / PRESIDENT)
 ===================================================== */
 router.get(
   "/",
@@ -33,14 +33,14 @@ router.get(
 
       res.json(result.rows);
     } catch (err) {
-      console.error("GET MEMBERS ERROR 👉", err);
+      console.error("GET MEMBERS ERROR 👉", err.message);
       res.status(500).json({ error: "Failed to load members" });
     }
   }
 );
 
 /* =====================================================
-   2️⃣ ADD MEMBER (ADMIN / PRESIDENT)
+   2️⃣ ADD MEMBER (SUPER_ADMIN / PRESIDENT)
 ===================================================== */
 router.post(
   "/",
@@ -61,8 +61,8 @@ router.post(
       await pool.query(
         `
         INSERT INTO members
-        (member_id, name, association_id, personal_email, phone, address, role)
-        VALUES ($1,$2,$3,$4,$5,$6,$7)
+        (member_id, name, association_id, personal_email, phone, address, role, active)
+        VALUES ($1,$2,$3,$4,$5,$6,$7,true)
         `,
         [
           member_id,
@@ -75,7 +75,7 @@ router.post(
         ]
       );
 
-      // Optional email
+      // Optional welcome email
       if (personal_email) {
         await sendMail(
           personal_email,
@@ -91,14 +91,14 @@ router.post(
 
       res.json({ message: "Member added successfully" });
     } catch (err) {
-      console.error("ADD MEMBER ERROR 👉", err);
+      console.error("ADD MEMBER ERROR 👉", err.message);
       res.status(500).json({ error: "Failed to add member" });
     }
   }
 );
 
 /* =====================================================
-   3️⃣ UPDATE MEMBER (EDIT DETAILS / ROLE)
+   3️⃣ UPDATE MEMBER (DETAILS + ROLE)
 ===================================================== */
 router.put(
   "/:id",
@@ -106,25 +106,34 @@ router.put(
   checkRole("SUPER_ADMIN", "PRESIDENT"),
   async (req, res) => {
     try {
-      const { name, personal_email, phone, address, role } = req.body;
+      const { name, personal_email, phone, address, role, active } = req.body;
 
       await pool.query(
         `
         UPDATE members
-        SET 
+        SET
           name=$1,
           personal_email=$2,
           phone=$3,
           address=$4,
-          role=$5
-        WHERE id=$6
+          role=$5,
+          active=$6
+        WHERE id=$7
         `,
-        [name, personal_email, phone, address, role, req.params.id]
+        [
+          name,
+          personal_email,
+          phone,
+          address,
+          role,
+          active,
+          req.params.id,
+        ]
       );
 
       res.json({ message: "Member updated successfully" });
     } catch (err) {
-      console.error("UPDATE MEMBER ERROR 👉", err);
+      console.error("UPDATE MEMBER ERROR 👉", err.message);
       res.status(500).json({ error: "Failed to update member" });
     }
   }
@@ -150,19 +159,19 @@ router.put(
         message: active ? "Member activated" : "Member deactivated",
       });
     } catch (err) {
-      console.error("STATUS UPDATE ERROR 👉", err);
+      console.error("STATUS UPDATE ERROR 👉", err.message);
       res.status(500).json({ error: "Failed to update status" });
     }
   }
 );
 
 /* =====================================================
-   5️⃣ DELETE MEMBER
+   5️⃣ DELETE MEMBER (SUPER_ADMIN ONLY)
 ===================================================== */
 router.delete(
   "/:id",
   verifyToken,
-  checkRole("SUPER_ADMIN", "PRESIDENT"),
+  checkRole("SUPER_ADMIN"),
   async (req, res) => {
     try {
       await pool.query(
@@ -172,7 +181,7 @@ router.delete(
 
       res.json({ message: "Member deleted successfully" });
     } catch (err) {
-      console.error("DELETE MEMBER ERROR 👉", err);
+      console.error("DELETE MEMBER ERROR 👉", err.message);
       res.status(500).json({ error: "Failed to delete member" });
     }
   }
@@ -221,14 +230,14 @@ router.post(
 
       res.json({ message: "Login details sent" });
     } catch (err) {
-      console.error("RESEND LOGIN ERROR 👉", err);
+      console.error("RESEND LOGIN ERROR 👉", err.message);
       res.status(500).json({ error: "Failed to send login details" });
     }
   }
 );
 
 /* =====================================================
-   7️⃣ MEMBER DASHBOARD DATA (SELF)
+   7️⃣ MEMBER DASHBOARD (SELF)
 ===================================================== */
 router.get(
   "/dashboard",
@@ -274,7 +283,7 @@ router.get(
         recent_contributions: recent.rows,
       });
     } catch (err) {
-      console.error("MEMBER DASHBOARD ERROR 👉", err);
+      console.error("MEMBER DASHBOARD ERROR 👉", err.message);
       res.status(500).json({ error: "Failed to load dashboard" });
     }
   }
