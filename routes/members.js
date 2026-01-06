@@ -7,7 +7,7 @@ const sendMail = require("../utils/sendMail");
 const router = express.Router();
 
 /* =====================================================
-   1️⃣ GET ALL MEMBERS (SUPER_ADMIN / PRESIDENT)
+   1️⃣ GET ALL MEMBERS (USERS TABLE)
 ===================================================== */
 router.get(
   "/",
@@ -15,32 +15,33 @@ router.get(
   checkRole("SUPER_ADMIN", "PRESIDENT"),
   async (req, res) => {
     try {
-      const result = await pool.query(`
-        SELECT 
+      const { rows } = await pool.query(`
+        SELECT
           id,
           member_id,
           name,
-          association_id,
+          username AS association_id,
           personal_email,
           phone,
           address,
           role,
           active,
           created_at
-        FROM members
+        FROM users
+        WHERE role != 'SUPER_ADMIN'
         ORDER BY created_at DESC
       `);
 
-      res.json(result.rows);
+      res.json(rows);
     } catch (err) {
       console.error("GET MEMBERS ERROR 👉", err.message);
-      res.status(500).json({ error: "Failed to load members" });
+      res.status(500).json({ error: "Failed to fetch members" });
     }
   }
 );
 
 /* =====================================================
-   2️⃣ ADD MEMBER (SUPER_ADMIN / PRESIDENT)
+   2️⃣ ADD MEMBER (CREATE USER)
 ===================================================== */
 router.post(
   "/",
@@ -56,13 +57,14 @@ router.post(
         phone,
         address,
         role,
+        password,
       } = req.body;
 
       await pool.query(
         `
-        INSERT INTO members
-        (member_id, name, association_id, personal_email, phone, address, role, active)
-        VALUES ($1,$2,$3,$4,$5,$6,$7,true)
+        INSERT INTO users
+        (member_id, name, username, personal_email, phone, address, role, password, active)
+        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,true)
         `,
         [
           member_id,
@@ -72,10 +74,11 @@ router.post(
           phone,
           address,
           role,
+          password, // ⚠️ assume already hashed
         ]
       );
 
-      // Optional welcome email
+      // Optional welcome mail
       if (personal_email) {
         await sendMail(
           personal_email,
@@ -89,7 +92,7 @@ router.post(
         );
       }
 
-      res.json({ message: "Member added successfully" });
+      res.status(201).json({ message: "Member added successfully" });
     } catch (err) {
       console.error("ADD MEMBER ERROR 👉", err.message);
       res.status(500).json({ error: "Failed to add member" });
@@ -98,7 +101,7 @@ router.post(
 );
 
 /* =====================================================
-   3️⃣ UPDATE MEMBER (DETAILS + ROLE)
+   3️⃣ UPDATE MEMBER (DETAILS + ROLE + ACTIVE)
 ===================================================== */
 router.put(
   "/:id",
@@ -110,7 +113,7 @@ router.put(
 
       await pool.query(
         `
-        UPDATE members
+        UPDATE users
         SET
           name=$1,
           personal_email=$2,
@@ -142,22 +145,18 @@ router.put(
 /* =====================================================
    4️⃣ ACTIVATE / DEACTIVATE MEMBER
 ===================================================== */
-router.put(
-  "/status/:id",
+router.patch(
+  "/:id/status",
   verifyToken,
   checkRole("SUPER_ADMIN", "PRESIDENT"),
   async (req, res) => {
     try {
-      const { active } = req.body;
-
       await pool.query(
-        `UPDATE members SET active=$1 WHERE id=$2`,
-        [active, req.params.id]
+        `UPDATE users SET active = NOT active WHERE id=$1`,
+        [req.params.id]
       );
 
-      res.json({
-        message: active ? "Member activated" : "Member deactivated",
-      });
+      res.json({ message: "Status updated" });
     } catch (err) {
       console.error("STATUS UPDATE ERROR 👉", err.message);
       res.status(500).json({ error: "Failed to update status" });
@@ -174,15 +173,14 @@ router.delete(
   checkRole("SUPER_ADMIN"),
   async (req, res) => {
     try {
-      await pool.query(
-        `DELETE FROM members WHERE id=$1`,
-        [req.params.id]
-      );
+      await pool.query(`DELETE FROM users WHERE id=$1`, [
+        req.params.id,
+      ]);
 
       res.json({ message: "Member deleted successfully" });
     } catch (err) {
       console.error("DELETE MEMBER ERROR 👉", err.message);
-      res.status(500).json({ error: "Failed to delete member" });
+      res.status(500).json({ error: "Delete failed" });
     }
   }
 );
@@ -198,8 +196,8 @@ router.post(
     try {
       const result = await pool.query(
         `
-        SELECT name, association_id, personal_email
-        FROM members
+        SELECT name, username AS association_id, personal_email
+        FROM users
         WHERE id=$1
         `,
         [req.params.id]
@@ -209,21 +207,21 @@ router.post(
         return res.status(404).json({ error: "Member not found" });
       }
 
-      const m = result.rows[0];
+      const u = result.rows[0];
 
-      if (!m.personal_email) {
+      if (!u.personal_email) {
         return res
           .status(400)
           .json({ error: "Member email not available" });
       }
 
       await sendMail(
-        m.personal_email,
+        u.personal_email,
         "Association Login Details",
         `
-        <h3>Hello ${m.name}</h3>
+        <h3>Hello ${u.name}</h3>
         <p>Your login ID:</p>
-        <b>${m.association_id}</b>
+        <b>${u.association_id}</b>
         <p>Please use your existing password.</p>
         `
       );
@@ -248,8 +246,12 @@ router.get(
 
       const profile = await pool.query(
         `
-        SELECT name, member_id, association_id, role
-        FROM members
+        SELECT
+          name,
+          member_id,
+          username AS association_id,
+          role
+        FROM users
         WHERE member_id=$1
         `,
         [memberId]
@@ -261,7 +263,8 @@ router.get(
           COUNT(*) AS total_contributions,
           COALESCE(SUM(amount),0) AS total_amount
         FROM contributions
-        WHERE member_id=$1 AND status='APPROVED'
+        WHERE member_id=$1
+          AND status='APPROVED'
         `,
         [memberId]
       );
