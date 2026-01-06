@@ -2,11 +2,12 @@ const express = require("express");
 const pool = require("../db");
 const verifyToken = require("../middleware/verifyToken");
 const checkRole = require("../middleware/checkRole");
+const sendMail = require("../utils/sendMail");
 
 const router = express.Router();
 
 /* =====================================================
-   👥 GET ALL MEMBERS (SUPER ADMIN / PRESIDENT)
+   1️⃣ GET ALL MEMBERS (ADMIN / PRESIDENT)
 ===================================================== */
 router.get(
   "/",
@@ -15,13 +16,16 @@ router.get(
   async (req, res) => {
     try {
       const result = await pool.query(`
-        SELECT
+        SELECT 
           id,
           member_id,
           name,
-          email,
+          association_id,
+          personal_email,
+          phone,
+          address,
           role,
-          status,
+          active,
           created_at
         FROM members
         ORDER BY created_at DESC
@@ -29,14 +33,72 @@ router.get(
 
       res.json(result.rows);
     } catch (err) {
-      console.error("GET MEMBERS ERROR 👉", err.message);
+      console.error("GET MEMBERS ERROR 👉", err);
       res.status(500).json({ error: "Failed to load members" });
     }
   }
 );
 
 /* =====================================================
-   ✏️ UPDATE MEMBER ROLE / STATUS
+   2️⃣ ADD MEMBER (ADMIN / PRESIDENT)
+===================================================== */
+router.post(
+  "/",
+  verifyToken,
+  checkRole("SUPER_ADMIN", "PRESIDENT"),
+  async (req, res) => {
+    try {
+      const {
+        member_id,
+        name,
+        association_id,
+        personal_email,
+        phone,
+        address,
+        role,
+      } = req.body;
+
+      await pool.query(
+        `
+        INSERT INTO members
+        (member_id, name, association_id, personal_email, phone, address, role)
+        VALUES ($1,$2,$3,$4,$5,$6,$7)
+        `,
+        [
+          member_id,
+          name,
+          association_id,
+          personal_email,
+          phone,
+          address,
+          role,
+        ]
+      );
+
+      // Optional email
+      if (personal_email) {
+        await sendMail(
+          personal_email,
+          "Welcome to Association System",
+          `
+          <h3>Hello ${name}</h3>
+          <p>Your Association ID:</p>
+          <b>${association_id}</b>
+          <p>Please login and change your password.</p>
+          `
+        );
+      }
+
+      res.json({ message: "Member added successfully" });
+    } catch (err) {
+      console.error("ADD MEMBER ERROR 👉", err);
+      res.status(500).json({ error: "Failed to add member" });
+    }
+  }
+);
+
+/* =====================================================
+   3️⃣ UPDATE MEMBER (EDIT DETAILS / ROLE)
 ===================================================== */
 router.put(
   "/:id",
@@ -44,22 +106,176 @@ router.put(
   checkRole("SUPER_ADMIN", "PRESIDENT"),
   async (req, res) => {
     try {
-      const { role, status } = req.body;
+      const { name, personal_email, phone, address, role } = req.body;
 
       await pool.query(
         `
         UPDATE members
-        SET role = $1,
-            status = $2
-        WHERE id = $3
+        SET 
+          name=$1,
+          personal_email=$2,
+          phone=$3,
+          address=$4,
+          role=$5
+        WHERE id=$6
         `,
-        [role, status, req.params.id]
+        [name, personal_email, phone, address, role, req.params.id]
       );
 
       res.json({ message: "Member updated successfully" });
     } catch (err) {
-      console.error("UPDATE MEMBER ERROR 👉", err.message);
+      console.error("UPDATE MEMBER ERROR 👉", err);
       res.status(500).json({ error: "Failed to update member" });
+    }
+  }
+);
+
+/* =====================================================
+   4️⃣ ACTIVATE / DEACTIVATE MEMBER
+===================================================== */
+router.put(
+  "/status/:id",
+  verifyToken,
+  checkRole("SUPER_ADMIN", "PRESIDENT"),
+  async (req, res) => {
+    try {
+      const { active } = req.body;
+
+      await pool.query(
+        `UPDATE members SET active=$1 WHERE id=$2`,
+        [active, req.params.id]
+      );
+
+      res.json({
+        message: active ? "Member activated" : "Member deactivated",
+      });
+    } catch (err) {
+      console.error("STATUS UPDATE ERROR 👉", err);
+      res.status(500).json({ error: "Failed to update status" });
+    }
+  }
+);
+
+/* =====================================================
+   5️⃣ DELETE MEMBER
+===================================================== */
+router.delete(
+  "/:id",
+  verifyToken,
+  checkRole("SUPER_ADMIN", "PRESIDENT"),
+  async (req, res) => {
+    try {
+      await pool.query(
+        `DELETE FROM members WHERE id=$1`,
+        [req.params.id]
+      );
+
+      res.json({ message: "Member deleted successfully" });
+    } catch (err) {
+      console.error("DELETE MEMBER ERROR 👉", err);
+      res.status(500).json({ error: "Failed to delete member" });
+    }
+  }
+);
+
+/* =====================================================
+   6️⃣ RESEND LOGIN DETAILS
+===================================================== */
+router.post(
+  "/resend-login/:id",
+  verifyToken,
+  checkRole("SUPER_ADMIN", "PRESIDENT"),
+  async (req, res) => {
+    try {
+      const result = await pool.query(
+        `
+        SELECT name, association_id, personal_email
+        FROM members
+        WHERE id=$1
+        `,
+        [req.params.id]
+      );
+
+      if (result.rows.length === 0) {
+        return res.status(404).json({ error: "Member not found" });
+      }
+
+      const m = result.rows[0];
+
+      if (!m.personal_email) {
+        return res
+          .status(400)
+          .json({ error: "Member email not available" });
+      }
+
+      await sendMail(
+        m.personal_email,
+        "Association Login Details",
+        `
+        <h3>Hello ${m.name}</h3>
+        <p>Your login ID:</p>
+        <b>${m.association_id}</b>
+        <p>Please use your existing password.</p>
+        `
+      );
+
+      res.json({ message: "Login details sent" });
+    } catch (err) {
+      console.error("RESEND LOGIN ERROR 👉", err);
+      res.status(500).json({ error: "Failed to send login details" });
+    }
+  }
+);
+
+/* =====================================================
+   7️⃣ MEMBER DASHBOARD DATA (SELF)
+===================================================== */
+router.get(
+  "/dashboard",
+  verifyToken,
+  async (req, res) => {
+    try {
+      const memberId = req.user.member_id;
+
+      const profile = await pool.query(
+        `
+        SELECT name, member_id, association_id, role
+        FROM members
+        WHERE member_id=$1
+        `,
+        [memberId]
+      );
+
+      const stats = await pool.query(
+        `
+        SELECT
+          COUNT(*) AS total_contributions,
+          COALESCE(SUM(amount),0) AS total_amount
+        FROM contributions
+        WHERE member_id=$1 AND status='APPROVED'
+        `,
+        [memberId]
+      );
+
+      const recent = await pool.query(
+        `
+        SELECT fund_name, amount, status, receipt_no
+        FROM contributions
+        WHERE member_id=$1
+        ORDER BY created_at DESC
+        LIMIT 5
+        `,
+        [memberId]
+      );
+
+      res.json({
+        profile: profile.rows[0],
+        stats: stats.rows[0],
+        recent_contributions: recent.rows,
+      });
+    } catch (err) {
+      console.error("MEMBER DASHBOARD ERROR 👉", err);
+      res.status(500).json({ error: "Failed to load dashboard" });
     }
   }
 );
