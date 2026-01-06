@@ -115,7 +115,40 @@ router.post("/login", async (req, res) => {
     res.status(500).json({ error: "Server error" });
   }
 });
+/* =========================
+   🔐 GET LOGGED IN USER
+========================= */
+router.get("/me", verifyToken, async (req, res) => {
+  try {
+    const result = await pool.query(
+      `
+      SELECT
+        id,
+        member_id,
+        name,
+        username AS association_id,
+        personal_email,
+        phone,
+        address,
+        role,
+        active,
+        is_first_login
+      FROM users
+      WHERE id = $1
+      `,
+      [req.user.id]
+    );
 
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: "User not found" });
+    }
+
+    res.json(result.rows[0]);
+  } catch (err) {
+    console.error("AUTH /me ERROR 👉", err.message);
+    res.status(500).json({ error: "Failed to fetch user" });
+  }
+});
 /* =========================
    🔐 FORGOT PASSWORD – SEND OTP
 ========================= */
