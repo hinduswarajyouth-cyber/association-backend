@@ -1,221 +1,196 @@
 const express = require("express");
 const pool = require("../db");
-
 const verifyToken = require("../middleware/verifyToken");
 const checkRole = require("../middleware/checkRole");
+const sendMail = require("../utils/sendMail");
+
+// 📧 Email template
+const { announcementTemplate } = require("../utils/emailTemplates");
 
 const router = express.Router();
 
 /* =====================================================
-   📨 SUBMIT SUGGESTION (MEMBER – SELF)
+   📢 CREATE ANNOUNCEMENT (SUPER_ADMIN / PRESIDENT)
+   + OPTIONAL EMAIL NOTIFICATION
 ===================================================== */
-router.post("/suggestions", verifyToken, async (req, res) => {
-  try {
-    const { title, message, type } = req.body;
-
-    if (!message) {
-      return res.status(400).json({ error: "Message required" });
-    }
-
-    await pool.query(
-      `
-      INSERT INTO suggestions (member_id, title, message, type)
-      VALUES ($1, $2, $3, $4)
-      `,
-      [req.user.id, title || null, message, type || "GENERAL"]
-    );
-
-    res.json({ message: "Suggestion submitted successfully" });
-  } catch (err) {
-    console.error("SUGGESTION ERROR 👉", err.message);
-    res.status(500).json({ error: "Failed to submit suggestion" });
-  }
-});
-
-/* =====================================================
-   👥 GET ALL MEMBERS (ROLE BASED)
-   ✅ SHOWS ALL USERS INCLUDING SUPER_ADMIN
-===================================================== */
-router.get(
+router.post(
   "/",
   verifyToken,
-  checkRole(
-    "SUPER_ADMIN",
-    "PRESIDENT",
-    "VICE_PRESIDENT",
-    "GENERAL_SECRETARY",
-    "JOINT_SECRETARY",
-    "TREASURER",
-    "EC_MEMBER"
-  ),
+  checkRole("SUPER_ADMIN", "PRESIDENT"),
   async (req, res) => {
     try {
-      const { rows } = await pool.query(`
-        SELECT
-          id,
-          member_id,
-          name,
-          username,
-          personal_email,
-          phone,
-          address,
-          role,
-          active
-        FROM users
-        ORDER BY created_at ASC
-      `);
+      const {
+        title,
+        message,
+        category = "GENERAL",
+        priority = "NORMAL",
+        expiry_date = null,
+        notify = false,
+      } = req.body;
 
-      res.json(
-        rows.map((u) => ({
-          id: u.id,
-          member_id: u.member_id,          // HSY/JGTL/2026/0001
-          name: u.name,
-          association_id: u.username,      // name@hsy.org
-          personal_email: u.personal_email,
-          phone: u.phone,
-          address: u.address,
-          role: u.role,
-          active: u.active,
-        }))
+      if (!title || !message) {
+        return res.status(400).json({ error: "Title & message required" });
+      }
+
+      // 🗄️ INSERT ANNOUNCEMENT
+      const result = await pool.query(
+        `
+        INSERT INTO announcements
+          (title, message, category, priority, expiry_date)
+        VALUES ($1, $2, $3, $4, $5)
+        RETURNING *
+        `,
+        [title, message, category, priority, expiry_date]
       );
+
+      // 🔔 EMAIL NOTIFICATION (OPTIONAL)
+      if (notify) {
+        const users = await pool.query(`
+          SELECT personal_email
+          FROM users
+          WHERE active = true
+            AND personal_email IS NOT NULL
+        `);
+
+        for (const u of users.rows) {
+          await sendMail(
+            u.personal_email,
+            `📢 ${title}`,
+            announcementTemplate({
+              title,
+              message,
+              category,
+              priority,
+              expiry_date,
+            })
+          );
+        }
+      }
+
+      res.json({
+        message: notify
+          ? "Announcement created & notifications sent"
+          : "Announcement created successfully",
+        announcement: result.rows[0],
+      });
     } catch (err) {
-      console.error("GET MEMBERS ERROR 👉", err.message);
-      res.status(500).json({ error: "Failed to fetch members" });
+      console.error("CREATE ANNOUNCEMENT ERROR 👉", err.message);
+      res.status(500).json({ error: "Failed to create announcement" });
     }
   }
 );
 
 /* =====================================================
-   👤 GET MY PROFILE (SELF)
+   📥 GET ANNOUNCEMENTS (ALL USERS)
+   ✔ Seen / Unseen
+   ✔ PINNED first
+   ✔ Expiry respected
 ===================================================== */
-router.get("/profile", verifyToken, async (req, res) => {
+router.get("/", verifyToken, async (req, res) => {
   try {
-    const { rows } = await pool.query(
+    const userId = req.user.id;
+
+    const result = await pool.query(
       `
       SELECT
-        id,
-        member_id,
-        name,
-        username,
-        personal_email,
-        phone,
-        address,
-        role,
-        active
-      FROM users
-      WHERE id = $1
+        a.*,
+        EXISTS (
+          SELECT 1
+          FROM announcement_views v
+          WHERE v.announcement_id = a.id
+            AND v.user_id = $1
+        ) AS seen
+      FROM announcements a
+      WHERE a.expiry_date IS NULL
+         OR a.expiry_date >= CURRENT_DATE
+      ORDER BY
+        CASE WHEN a.priority = 'PINNED' THEN 0 ELSE 1 END,
+        a.created_at DESC
       `,
-      [req.user.id]
+      [userId]
     );
 
-    if (!rows.length) {
-      return res.status(404).json({ error: "Profile not found" });
-    }
-
-    res.json(rows[0]);
+    res.json(result.rows);
   } catch (err) {
-    console.error("GET PROFILE ERROR 👉", err.message);
-    res.status(500).json({ error: "Failed to load profile" });
+    console.error("GET ANNOUNCEMENTS ERROR 👉", err.message);
+    res.status(500).json({ error: "Failed to load announcements" });
   }
 });
 
 /* =====================================================
-   ✏️ UPDATE MY PROFILE (SELF)
+   👁️ MARK ANNOUNCEMENT AS SEEN (ALL USERS)
 ===================================================== */
-router.put("/profile", verifyToken, async (req, res) => {
+router.post("/:id/seen", verifyToken, async (req, res) => {
   try {
-    const { name, personal_email, phone, address } = req.body;
-
-    if (!name) {
-      return res.status(400).json({ error: "Name is required" });
-    }
-
     await pool.query(
       `
-      UPDATE users
-      SET
-        name = $1,
-        personal_email = $2,
-        phone = $3,
-        address = $4
-      WHERE id = $5
+      INSERT INTO announcement_views (announcement_id, user_id)
+      VALUES ($1, $2)
+      ON CONFLICT DO NOTHING
       `,
-      [
-        name,
-        personal_email || null,
-        phone || null,
-        address || null,
-        req.user.id,
-      ]
+      [req.params.id, req.user.id]
     );
 
-    res.json({ message: "Profile updated successfully" });
+    res.json({ message: "Marked as seen" });
   } catch (err) {
-    console.error("UPDATE PROFILE ERROR 👉", err.message);
-    res.status(500).json({ error: "Failed to update profile" });
+    console.error("MARK SEEN ERROR 👉", err.message);
+    res.status(500).json({ error: "Failed to mark as seen" });
   }
 });
 
 /* =====================================================
-   📊 MEMBER DASHBOARD (SELF)
+   ✏️ UPDATE ANNOUNCEMENT (SUPER_ADMIN / PRESIDENT)
 ===================================================== */
-router.get("/dashboard", verifyToken, async (req, res) => {
-  try {
-    const profile = await pool.query(
-      `
-      SELECT id, name, role, active
-      FROM users
-      WHERE id = $1
-      `,
-      [req.user.id]
-    );
+router.put(
+  "/:id",
+  verifyToken,
+  checkRole("SUPER_ADMIN", "PRESIDENT"),
+  async (req, res) => {
+    try {
+      const { title, message, category, priority, expiry_date } = req.body;
 
-    const stats = await pool.query(
-      `
-      SELECT
-        COUNT(*) AS total_contributions,
-        COALESCE(SUM(amount), 0) AS total_amount
-      FROM contributions
-      WHERE member_id = $1
-      `,
-      [req.user.id]
-    );
+      await pool.query(
+        `
+        UPDATE announcements
+        SET
+          title = $1,
+          message = $2,
+          category = $3,
+          priority = $4,
+          expiry_date = $5
+        WHERE id = $6
+        `,
+        [title, message, category, priority, expiry_date, req.params.id]
+      );
 
-    res.json({
-      profile: profile.rows[0],
-      stats: stats.rows[0],
-    });
-  } catch (err) {
-    console.error("MEMBER DASHBOARD ERROR 👉", err.message);
-    res.status(500).json({ error: "Failed to load dashboard" });
+      res.json({ message: "Announcement updated successfully" });
+    } catch (err) {
+      console.error("UPDATE ANNOUNCEMENT ERROR 👉", err.message);
+      res.status(500).json({ error: "Failed to update announcement" });
+    }
   }
-});
+);
 
 /* =====================================================
-   💰 MEMBER CONTRIBUTIONS (SELF)
+   🗑️ DELETE ANNOUNCEMENT (SUPER_ADMIN / PRESIDENT)
 ===================================================== */
-router.get("/contributions", verifyToken, async (req, res) => {
-  try {
-    const { rows } = await pool.query(
-      `
-      SELECT
-        id,
-        receipt_no,
-        amount,
-        status,
-        receipt_date
-      FROM contributions
-      WHERE member_id = $1
-      ORDER BY receipt_date DESC
-      `,
-      [req.user.id]
-    );
+router.delete(
+  "/:id",
+  verifyToken,
+  checkRole("SUPER_ADMIN", "PRESIDENT"),
+  async (req, res) => {
+    try {
+      await pool.query(
+        `DELETE FROM announcements WHERE id = $1`,
+        [req.params.id]
+      );
 
-    res.json({ contributions: rows });
-  } catch (err) {
-    console.error("MEMBER CONTRIBUTIONS ERROR 👉", err.message);
-    res.status(500).json({ error: "Failed to load contributions" });
+      res.json({ message: "Announcement deleted successfully" });
+    } catch (err) {
+      console.error("DELETE ANNOUNCEMENT ERROR 👉", err.message);
+      res.status(500).json({ error: "Failed to delete announcement" });
+    }
   }
-});
+);
 
 module.exports = router;
