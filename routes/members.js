@@ -6,7 +6,7 @@ const checkRole = require("../middleware/checkRole");
 const router = express.Router();
 
 /* =====================================================
-   👥 GET ALL MEMBERS (ADMIN / PRESIDENT)
+   👥 GET ALL MEMBERS (SUPER ADMIN / PRESIDENT)
 ===================================================== */
 router.get(
   "/",
@@ -18,8 +18,8 @@ router.get(
         SELECT
           id,
           member_id,
-          full_name,
-          personal_email,
+          name,
+          email,
           role,
           status,
           created_at
@@ -49,16 +49,17 @@ router.put(
       await pool.query(
         `
         UPDATE members
-        SET role = $1, status = $2
+        SET role = $1,
+            status = $2
         WHERE id = $3
         `,
         [role, status, req.params.id]
       );
 
-      res.json({ message: "Member updated" });
+      res.json({ message: "Member updated successfully" });
     } catch (err) {
       console.error("UPDATE MEMBER ERROR 👉", err.message);
-      res.status(500).json({ error: "Update failed" });
+      res.status(500).json({ error: "Failed to update member" });
     }
   }
 );
