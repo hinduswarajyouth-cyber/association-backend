@@ -291,5 +291,36 @@ router.get(
     }
   }
 );
+/* =====================================================
+   💰 MEMBER CONTRIBUTIONS (SELF DASHBOARD)
+===================================================== */
+router.get(
+  "/contributions",
+  verifyToken,
+  async (req, res) => {
+    try {
+      const memberId = req.user.member_id;
 
+      const result = await pool.query(
+        `
+        SELECT
+          receipt_no,
+          fund_name,
+          amount,
+          status,
+          created_at
+        FROM contributions
+        WHERE member_id = $1
+        ORDER BY created_at DESC
+        `,
+        [memberId]
+      );
+
+      res.json(result.rows);
+    } catch (err) {
+      console.error("MEMBER CONTRIBUTIONS ERROR 👉", err.message);
+      res.status(500).json({ error: "Failed to load contributions" });
+    }
+  }
+);
 module.exports = router;
