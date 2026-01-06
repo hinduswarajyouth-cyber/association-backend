@@ -2,83 +2,12 @@ const express = require("express");
 const pool = require("../db");
 const verifyToken = require("../middleware/verifyToken");
 const checkRole = require("../middleware/checkRole");
-const sendMail = require("../utils/sendMail");
-
-// ✅ IMPORTANT: template import
-const { announcementTemplate } = require("../utils/emailTemplates");
 
 const router = express.Router();
 
 /* =====================================================
-   📢 CREATE ANNOUNCEMENT (ADMIN) + EMAIL NOTIFY
-===================================================== */
-router.post(
-  "/",
-  verifyToken,
-  checkRole("SUPER_ADMIN", "PRESIDENT"),
-  async (req, res) => {
-    try {
-      const {
-        title,
-        message,
-        category,
-        priority,
-        expiry_date,
-        notify, // true / false
-      } = req.body;
-
-      // 🗄️ INSERT ANNOUNCEMENT
-      const result = await pool.query(
-        `
-        INSERT INTO announcements
-        (title, message, category, priority, expiry_date)
-        VALUES ($1, $2, $3, $4, $5)
-        RETURNING *
-        `,
-        [title, message, category, priority, expiry_date]
-      );
-
-      // 🔔 EMAIL NOTIFICATION (THIS IS WHERE TEMPLATE IS USED)
-      if (notify) {
-        const members = await pool.query(
-          `
-          SELECT email 
-          FROM members 
-          WHERE status = 'ACTIVE' 
-            AND email IS NOT NULL
-          `
-        );
-
-        for (const m of members.rows) {
-          await sendMail(
-            m.email,
-            `📢 ${title}`,
-            announcementTemplate({
-              title,
-              message,
-              category,
-              priority,
-              expiry_date,
-            })
-          );
-        }
-      }
-
-      res.json({
-        message: notify
-          ? "Announcement created & emails sent"
-          : "Announcement created successfully",
-        announcement: result.rows[0],
-      });
-    } catch (err) {
-      console.error("CREATE ANNOUNCEMENT ERROR 👉", err.message);
-      res.status(500).json({ error: "Failed to create announcement" });
-    }
-  }
-);
-
-/* =====================================================
    📥 GET ANNOUNCEMENTS (WITH SEEN STATUS)
+   ALL ROLES
 ===================================================== */
 router.get("/", verifyToken, async (req, res) => {
   try {
@@ -103,12 +32,13 @@ router.get("/", verifyToken, async (req, res) => {
 
     res.json(result.rows);
   } catch (err) {
+    console.error("GET ANNOUNCEMENTS ERROR 👉", err.message);
     res.status(500).json({ error: "Failed to load announcements" });
   }
 });
 
 /* =====================================================
-   👁️ MARK ANNOUNCEMENT AS SEEN
+   👁️ MARK AS SEEN
 ===================================================== */
 router.post("/:id/seen", verifyToken, async (req, res) => {
   try {
@@ -128,7 +58,38 @@ router.post("/:id/seen", verifyToken, async (req, res) => {
 });
 
 /* =====================================================
-   ✏️ UPDATE ANNOUNCEMENT (ADMIN)
+   ➕ CREATE (ADMIN / PRESIDENT)
+===================================================== */
+router.post(
+  "/",
+  verifyToken,
+  checkRole("SUPER_ADMIN", "PRESIDENT"),
+  async (req, res) => {
+    try {
+      const { title, message, category, priority, expiry_date } = req.body;
+
+      const result = await pool.query(
+        `
+        INSERT INTO announcements
+        (title, message, category, priority, expiry_date)
+        VALUES ($1, $2, $3, $4, $5)
+        RETURNING *
+        `,
+        [title, message, category, priority, expiry_date]
+      );
+
+      res.json({
+        message: "Announcement created",
+        announcement: result.rows[0],
+      });
+    } catch (err) {
+      res.status(500).json({ error: "Create failed" });
+    }
+  }
+);
+
+/* =====================================================
+   ✏️ UPDATE (ADMIN / PRESIDENT)
 ===================================================== */
 router.put(
   "/:id",
@@ -141,17 +102,13 @@ router.put(
       await pool.query(
         `
         UPDATE announcements
-        SET title=$1,
-            message=$2,
-            category=$3,
-            priority=$4,
-            expiry_date=$5
+        SET title=$1, message=$2, category=$3, priority=$4, expiry_date=$5
         WHERE id=$6
         `,
         [title, message, category, priority, expiry_date, req.params.id]
       );
 
-      res.json({ message: "Announcement updated" });
+      res.json({ message: "Updated" });
     } catch (err) {
       res.status(500).json({ error: "Update failed" });
     }
@@ -159,7 +116,7 @@ router.put(
 );
 
 /* =====================================================
-   🗑️ DELETE ANNOUNCEMENT (ADMIN)
+   🗑️ DELETE (ADMIN / PRESIDENT)
 ===================================================== */
 router.delete(
   "/:id",
@@ -172,7 +129,7 @@ router.delete(
         [req.params.id]
       );
 
-      res.json({ message: "Announcement deleted" });
+      res.json({ message: "Deleted" });
     } catch (err) {
       res.status(500).json({ error: "Delete failed" });
     }
