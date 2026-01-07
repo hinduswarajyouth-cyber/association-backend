@@ -8,26 +8,30 @@ const logAudit = require("../utils/auditLogger");
 const isYearClosed = require("../utils/isYearClosed");
 
 /* =====================================================
-   ➕ CREATE EXPENSE (TREASURER)
+   ➕ CREATE EXPENSE (REQUEST)
    POST /expenses
 ===================================================== */
 router.post(
   "/",
   verifyToken,
-  checkRole("TREASURER"),
+  checkRole("SUPER_ADMIN", "PRESIDENT"),
   async (req, res) => {
     try {
       const {
         title,
         category,
+        description,
         amount,
         expense_date,
-        description,
         fund_id,
       } = req.body;
 
       if (!title || !amount || !expense_date || !fund_id) {
         return res.status(400).json({ error: "Missing required fields" });
+      }
+
+      if (amount <= 0) {
+        return res.status(400).json({ error: "Invalid amount" });
       }
 
       const year = new Date(expense_date).getFullYear();
@@ -41,9 +45,9 @@ router.post(
         (
           title,
           category,
+          description,
           amount,
           expense_date,
-          description,
           fund_id,
           requested_by,
           status
@@ -54,9 +58,9 @@ router.post(
         [
           title,
           category || null,
+          description || null,
           amount,
           expense_date,
-          description || null,
           fund_id,
           req.user.id,
         ]
@@ -71,7 +75,7 @@ router.post(
       );
 
       res.status(201).json({
-        message: "Expense submitted for approval",
+        message: "Expense created (pending approval)",
         expense: result.rows[0],
       });
     } catch (err) {
@@ -82,13 +86,13 @@ router.post(
 );
 
 /* =====================================================
-   📋 GET ALL EXPENSES (ADMIN / TREASURER)
+   📋 GET ALL EXPENSES
    GET /expenses
 ===================================================== */
 router.get(
   "/",
   verifyToken,
-  checkRole("SUPER_ADMIN", "PRESIDENT", "TREASURER"),
+  checkRole("SUPER_ADMIN", "PRESIDENT"),
   async (req, res) => {
     try {
       const result = await pool.query(`
@@ -109,13 +113,13 @@ router.get(
 );
 
 /* =====================================================
-   ✅ APPROVE EXPENSE (PRESIDENT / SUPER_ADMIN)
+   ✅ APPROVE EXPENSE (LEDGER DEBIT)
    PUT /expenses/:id/approve
 ===================================================== */
 router.put(
   "/:id/approve",
   verifyToken,
-  checkRole("SUPER_ADMIN", "PRESIDENT"),
+  checkRole("SUPER_ADMIN"),
   async (req, res) => {
     const client = await pool.connect();
 
@@ -125,10 +129,10 @@ router.put(
 
       await client.query("BEGIN");
 
-      /* 1️⃣ Lock expense */
-      const { rows } = await client.query(
+      /* 🔒 Lock expense */
+      const expRes = await client.query(
         `
-        SELECT id, amount, fund_id, status
+        SELECT *
         FROM expenses
         WHERE id = $1
         FOR UPDATE
@@ -136,35 +140,40 @@ router.put(
         [expenseId]
       );
 
-      if (!rows.length) throw new Error("Expense not found");
+      if (!expRes.rowCount) throw new Error("Expense not found");
 
-      const expense = rows[0];
+      const expense = expRes.rows[0];
 
       if (expense.status !== "PENDING") {
         throw new Error("Only PENDING expenses can be approved");
       }
 
-      /* 2️⃣ Get current fund balance from ledger */
-      const balanceResult = await client.query(
+      const year = new Date(expense.expense_date).getFullYear();
+      if (await isYearClosed(year)) {
+        throw new Error("Financial year closed");
+      }
+
+      /* 💰 Get current balance from ledger */
+      const balRes = await client.query(
         `
         SELECT COALESCE(balance_after, 0) AS balance
         FROM ledger
         WHERE fund_id = $1
-        ORDER BY created_at DESC
+        ORDER BY id DESC
         LIMIT 1
         `,
         [expense.fund_id]
       );
 
-      const previousBalance = balanceResult.rows[0].balance;
+      const previousBalance = balRes.rows[0].balance;
 
       if (previousBalance < expense.amount) {
         throw new Error("Insufficient fund balance");
       }
 
-      const newBalance = previousBalance - expense.amount;
+      const newBalance = previousBalance - Number(expense.amount);
 
-      /* 3️⃣ Approve expense */
+      /* ✅ Approve expense */
       await client.query(
         `
         UPDATE expenses
@@ -177,7 +186,7 @@ router.put(
         [approvedBy, expenseId]
       );
 
-      /* 4️⃣ Ledger DEBIT entry */
+      /* 📘 Ledger DEBIT entry */
       await client.query(
         `
         INSERT INTO ledger
@@ -190,7 +199,8 @@ router.put(
           balance_after,
           created_by
         )
-        VALUES ('DEBIT','EXPENSE',$1,$2,$3,$4,$5)
+        VALUES
+        ('DEBIT','EXPENSE',$1,$2,$3,$4,$5)
         `,
         [
           expenseId,
@@ -232,7 +242,7 @@ router.put(
 router.put(
   "/:id/cancel",
   verifyToken,
-  checkRole("SUPER_ADMIN", "PRESIDENT"),
+  checkRole("SUPER_ADMIN"),
   async (req, res) => {
     const client = await pool.connect();
 
@@ -240,11 +250,15 @@ router.put(
       const expenseId = Number(req.params.id);
       const { reason } = req.body;
 
+      if (!reason) {
+        return res.status(400).json({ error: "Cancel reason required" });
+      }
+
       await client.query("BEGIN");
 
-      const { rows } = await client.query(
+      const expRes = await client.query(
         `
-        SELECT id, amount, fund_id, status
+        SELECT *
         FROM expenses
         WHERE id = $1
         FOR UPDATE
@@ -252,29 +266,38 @@ router.put(
         [expenseId]
       );
 
-      if (!rows.length) throw new Error("Expense not found");
+      if (!expRes.rowCount) throw new Error("Expense not found");
 
-      const expense = rows[0];
+      const expense = expRes.rows[0];
 
       if (expense.status !== "APPROVED") {
         throw new Error("Only APPROVED expenses can be cancelled");
       }
 
-      const balanceResult = await client.query(
+      const year = new Date(expense.expense_date).getFullYear();
+      if (await isYearClosed(year)) {
+        throw new Error("Financial year closed");
+      }
+
+      const balRes = await client.query(
         `
         SELECT balance_after
         FROM ledger
         WHERE fund_id = $1
-        ORDER BY created_at DESC
+        ORDER BY id DESC
         LIMIT 1
         `,
         [expense.fund_id]
       );
 
-      const newBalance =
-        balanceResult.rows[0].balance_after + expense.amount;
+      if (!balRes.rowCount) {
+        throw new Error("Ledger entry missing");
+      }
 
-      /* Update expense */
+      const newBalance =
+        Number(balRes.rows[0].balance_after) + Number(expense.amount);
+
+      /* ❌ Cancel expense */
       await client.query(
         `
         UPDATE expenses
@@ -285,10 +308,10 @@ router.put(
           cancel_reason = $2
         WHERE id = $3
         `,
-        [req.user.id, reason || null, expenseId]
+        [req.user.id, reason, expenseId]
       );
 
-      /* Ledger reversal CREDIT */
+      /* 📘 Ledger CREDIT reversal */
       await client.query(
         `
         INSERT INTO ledger
@@ -301,7 +324,8 @@ router.put(
           balance_after,
           created_by
         )
-        VALUES ('CREDIT','EXPENSE_REVERSAL',$1,$2,$3,$4,$5)
+        VALUES
+        ('CREDIT','EXPENSE_REVERSAL',$1,$2,$3,$4,$5)
         `,
         [
           expenseId,
@@ -322,7 +346,10 @@ router.put(
 
       await client.query("COMMIT");
 
-      res.json({ message: "Expense cancelled and reversed" });
+      res.json({
+        message: "Expense cancelled and reversed",
+        balance_after: newBalance,
+      });
     } catch (err) {
       await client.query("ROLLBACK");
       console.error("CANCEL EXPENSE ERROR 👉", err.message);
