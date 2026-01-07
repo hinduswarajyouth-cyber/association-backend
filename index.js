@@ -60,16 +60,22 @@ pool
 /* =========================
    🚏 ROUTES (FINAL & COMPLETE)
 ========================= */
+
+/* AUTH */
 app.use("/auth", require("./routes/auth"));
-app.use("/admin", require("./routes/admin")); // admin + suggestions
+
+/* CORE MODULES */
 app.use("/members", require("./routes/members"));
 app.use("/funds", require("./routes/funds"));
 app.use("/treasurer", require("./routes/treasurer"));
 app.use("/reports", require("./routes/reports"));
 app.use("/receipts", require("./routes/receipts"));
 
-/* 🔥 DASHBOARD (MOST IMPORTANT) */
+/* ADMIN / DASHBOARD */
 app.use("/api/dashboard", require("./routes/dashboard"));
+
+/* SUGGESTIONS ✅ (FIXED) */
+app.use("/api/suggestions", require("./routes/suggestions"));
 
 /* OTHER MODULES */
 app.use("/api/complaints", require("./routes/complaints"));
@@ -88,7 +94,10 @@ app.get("/", (req, res) => {
 ========================= */
 app.use((err, req, res, next) => {
   console.error("GLOBAL ERROR 👉", err);
-  res.status(500).json({ success: false, error: "Internal server error" });
+  res.status(500).json({
+    success: false,
+    error: "Internal server error",
+  });
 });
 
 /* =========================
