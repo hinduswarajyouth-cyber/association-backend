@@ -7,7 +7,6 @@ const rateLimit = require("express-rate-limit");
 const path = require("path");
 
 const pool = require("./db");
-
 const app = express();
 
 /* =========================
@@ -15,17 +14,17 @@ const app = express();
 ========================= */
 app.use(
   helmet({
-    crossOriginResourcePolicy: false, // allow images/files
+    crossOriginResourcePolicy: false,
   })
 );
 
 /* =========================
-   🌐 CORS (PRODUCTION SAFE)
+   🌐 CORS
 ========================= */
 app.use(
   cors({
-    origin: true,        // allow frontend domain dynamically
-    credentials: true,   // allow auth headers
+    origin: true,
+    credentials: true,
   })
 );
 
@@ -36,7 +35,7 @@ app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
 /* =========================
-   ⏱ RATE LIMITER
+   ⏱ RATE LIMIT
 ========================= */
 app.use(
   rateLimit({
@@ -51,27 +50,31 @@ app.use(
 app.use("/uploads", express.static(path.join(__dirname, "uploads")));
 
 /* =========================
-   🔌 DATABASE CHECK
+   🔌 DB CHECK
 ========================= */
 pool
   .query("SELECT 1")
-  .then(() => console.log("✅ DB Connected successfully"))
-  .catch((err) => console.error("❌ DB error:", err.message));
+  .then(() => console.log("✅ DB Connected"))
+  .catch((err) => console.error("❌ DB Error:", err.message));
 
 /* =========================
-   🚏 ROUTES (FINAL)
+   🚏 ROUTES (FINAL & COMPLETE)
 ========================= */
 app.use("/auth", require("./routes/auth"));
-app.use("/admin", require("./routes/admin"));              // admin + suggestions
+app.use("/admin", require("./routes/admin")); // admin + suggestions
 app.use("/members", require("./routes/members"));
 app.use("/funds", require("./routes/funds"));
 app.use("/treasurer", require("./routes/treasurer"));
 app.use("/reports", require("./routes/reports"));
 app.use("/receipts", require("./routes/receipts"));
 
+/* 🔥 DASHBOARD (MOST IMPORTANT) */
+app.use("/api/dashboard", require("./routes/dashboard"));
+
+/* OTHER MODULES */
 app.use("/api/complaints", require("./routes/complaints"));
 app.use("/api/meetings", require("./routes/meetings"));
-app.use("/api/announcements", require("./routes/announcements")); // ✅ ADDED
+app.use("/api/announcements", require("./routes/announcements"));
 
 /* =========================
    🏠 ROOT
@@ -85,10 +88,7 @@ app.get("/", (req, res) => {
 ========================= */
 app.use((err, req, res, next) => {
   console.error("GLOBAL ERROR 👉", err);
-  res.status(500).json({
-    success: false,
-    error: "Internal server error",
-  });
+  res.status(500).json({ success: false, error: "Internal server error" });
 });
 
 /* =========================

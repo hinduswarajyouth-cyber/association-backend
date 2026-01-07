@@ -343,55 +343,6 @@ router.delete(
   }
 );
 
-/* =====================================================
-   📊 DASHBOARD
-===================================================== */
-router.get(
-  "/dashboard",
-  verifyToken,
-  checkRole(...DASHBOARD_ROLES),
-  async (req, res) => {
-    try {
-      const [
-        members,
-        approved,
-        cancelled,
-        recentContributions,
-      ] = await Promise.all([
-        pool.query("SELECT COUNT(*) FROM users WHERE active=true"),
-        pool.query(`
-          SELECT COUNT(*) AS count, COALESCE(SUM(amount),0) AS total
-          FROM contributions
-          WHERE status='APPROVED'
-        `),
-        pool.query(
-          "SELECT COUNT(*) FROM contributions WHERE status='CANCELLED'"
-        ),
-        pool.query(`
-          SELECT
-            c.receipt_no,
-            c.amount,
-            c.receipt_date,
-            u.name AS member_name
-          FROM contributions c
-          JOIN users u ON u.id = c.member_id
-          ORDER BY c.receipt_date DESC
-          LIMIT 5
-        `),
-      ]);
 
-      res.json({
-        totalMembers: Number(members.rows[0].count),
-        approvedReceipts: Number(approved.rows[0].count),
-        totalCollection: Number(approved.rows[0].total),
-        cancelledReceipts: Number(cancelled.rows[0].count),
-        recentContributions: recentContributions.rows,
-      });
-    } catch (err) {
-      console.error("DASHBOARD ERROR 👉", err.message);
-      res.status(500).json({ error: "Dashboard failed" });
-    }
-  }
-);
 
 module.exports = router;

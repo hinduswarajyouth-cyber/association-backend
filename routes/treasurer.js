@@ -14,7 +14,7 @@ const isYearClosed = require("../utils/isYearClosed");
 router.get(
   "/pending",
   verifyToken,
-  checkRole("SUPER_ADMIN", "PRESIDENT"),
+  checkRole("TREASURER", "SUPER_ADMIN", "PRESIDENT"),
   async (req, res) => {
     try {
       const result = await pool.query(`
@@ -48,7 +48,7 @@ router.get(
 router.get(
   "/approved",
   verifyToken,
-  checkRole("SUPER_ADMIN", "PRESIDENT"),
+  checkRole("TREASURER", "SUPER_ADMIN", "PRESIDENT"),
   async (req, res) => {
     try {
       const result = await pool.query(`
@@ -76,49 +76,37 @@ router.get(
 );
 
 /* =====================================================
-   ✅ APPROVE CONTRIBUTION (LEDGER + RECEIPT)
+   ✅ APPROVE CONTRIBUTION
    PATCH /treasurer/approve/:id
 ===================================================== */
 router.patch(
   "/approve/:id",
   verifyToken,
-  checkRole("SUPER_ADMIN"),
+  checkRole("TREASURER", "SUPER_ADMIN"),
   async (req, res) => {
     const client = await pool.connect();
-
     try {
       const contributionId = Number(req.params.id);
       const approvedBy = req.user.id;
 
       await client.query("BEGIN");
 
-      /* 🔒 Lock contribution */
       const contribRes = await client.query(
-        `
-        SELECT *
-        FROM contributions
-        WHERE id = $1
-        FOR UPDATE
-        `,
+        `SELECT * FROM contributions WHERE id=$1 FOR UPDATE`,
         [contributionId]
       );
 
-      if (!contribRes.rowCount) {
-        throw new Error("Contribution not found");
-      }
-
+      if (!contribRes.rowCount) throw new Error("Contribution not found");
       const contribution = contribRes.rows[0];
 
-      if (contribution.status !== "PENDING") {
-        throw new Error("Contribution already processed");
-      }
+      if (contribution.status !== "PENDING")
+        throw new Error("Already processed");
 
       const year = new Date(contribution.created_at).getFullYear();
-      if (await isYearClosed(year)) {
+      if (await isYearClosed(year))
         throw new Error("Financial year closed");
-      }
 
-      /* 🔢 Generate receipt number (SAFE) */
+      /* Receipt sequence */
       const seqRes = await client.query(
         `
         INSERT INTO receipt_sequence (year, last_number)
@@ -134,51 +122,41 @@ router.patch(
         seqRes.rows[0].last_number
       ).padStart(6, "0")}`;
 
-      /* 💰 Get previous fund balance from ledger */
+      /* Ledger balance */
       const balRes = await client.query(
         `
-        SELECT COALESCE(balance_after, 0) AS balance
+        SELECT COALESCE(balance_after,0) AS balance
         FROM ledger
-        WHERE fund_id = $1
+        WHERE fund_id=$1
         ORDER BY id DESC
         LIMIT 1
         `,
         [contribution.fund_id]
       );
 
-      const previousBalance = balRes.rows[0].balance;
-      const newBalance = previousBalance + Number(contribution.amount);
+      const newBalance =
+        Number(balRes.rows[0].balance) + Number(contribution.amount);
 
-      /* ✅ Approve contribution */
       await client.query(
         `
         UPDATE contributions
         SET
-          status = 'APPROVED',
-          approved_by = $1,
-          approved_at = NOW(),
-          receipt_no = $2,
-          receipt_date = NOW()
-        WHERE id = $3
+          status='APPROVED',
+          approved_by=$1,
+          approved_at=NOW(),
+          receipt_no=$2,
+          receipt_date=NOW()
+        WHERE id=$3
         `,
         [approvedBy, receiptNo, contributionId]
       );
 
-      /* 📘 Ledger CREDIT entry */
       await client.query(
         `
         INSERT INTO ledger
-        (
-          entry_type,
-          source,
-          source_id,
-          fund_id,
-          amount,
-          balance_after,
-          created_by
-        )
+          (entry_type, source, source_id, fund_id, amount, balance_after, created_by)
         VALUES
-        ('CREDIT','CONTRIBUTION',$1,$2,$3,$4,$5)
+          ('CREDIT','CONTRIBUTION',$1,$2,$3,$4,$5)
         `,
         [
           contributionId,
@@ -194,19 +172,14 @@ router.patch(
         "CONTRIBUTION",
         contributionId,
         approvedBy,
-        { amount: contribution.amount, receipt_no: receiptNo }
+        { receipt_no: receiptNo }
       );
 
       await client.query("COMMIT");
 
-      res.json({
-        message: "Contribution approved successfully",
-        receipt_no: receiptNo,
-        balance_after: newBalance,
-      });
+      res.json({ message: "Approved", receipt_no: receiptNo });
     } catch (err) {
       await client.query("ROLLBACK");
-      console.error("APPROVE ERROR 👉", err.message);
       res.status(400).json({ error: err.message });
     } finally {
       client.release();
@@ -221,45 +194,40 @@ router.patch(
 router.patch(
   "/reject/:id",
   verifyToken,
-  checkRole("SUPER_ADMIN"),
+  checkRole("TREASURER", "SUPER_ADMIN"),
   async (req, res) => {
     try {
-      const { id } = req.params;
       const { reason } = req.body;
-
-      if (!reason) {
-        return res.status(400).json({ error: "Reject reason required" });
-      }
+      if (!reason)
+        return res.status(400).json({ error: "Reason required" });
 
       const result = await pool.query(
         `
         UPDATE contributions
         SET
-          status = 'REJECTED',
-          cancel_reason = $2,
-          cancelled_by = $3,
-          cancelled_at = NOW()
-        WHERE id = $1 AND status = 'PENDING'
-        RETURNING *
+          status='REJECTED',
+          cancel_reason=$2,
+          cancelled_by=$3,
+          cancelled_at=NOW()
+        WHERE id=$1 AND status='PENDING'
+        RETURNING id
         `,
-        [id, reason, req.user.id]
+        [req.params.id, reason, req.user.id]
       );
 
-      if (!result.rowCount) {
-        return res.status(404).json({ error: "Contribution not found" });
-      }
+      if (!result.rowCount)
+        return res.status(404).json({ error: "Not found" });
 
       await logAudit(
         "REJECT",
         "CONTRIBUTION",
-        id,
+        req.params.id,
         req.user.id,
         { reason }
       );
 
-      res.json({ message: "Contribution rejected" });
+      res.json({ message: "Rejected" });
     } catch (err) {
-      console.error("REJECT ERROR 👉", err.message);
       res.status(500).json({ error: "Server error" });
     }
   }
