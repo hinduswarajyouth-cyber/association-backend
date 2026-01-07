@@ -1,290 +1,268 @@
-import { useEffect, useState } from "react";
-import api from "../api/api";
-import Navbar from "../components/Navbar";
+const express = require("express");
+const pool = require("../db");
+
+const verifyToken = require("../middleware/verifyToken");
+const checkRole = require("../middleware/checkRole");
+const logAudit = require("../utils/auditLogger");
+
+const router = express.Router();
 
 /* =========================
-   SAFE ROLE FROM JWT
+   ROLES
 ========================= */
-const getRole = () => {
-  try {
-    const token = localStorage.getItem("token");
-    if (!token) return null;
-    return JSON.parse(atob(token.split(".")[1])).role;
-  } catch {
-    return null;
-  }
+const ROLES = {
+  SUPER_ADMIN: "SUPER_ADMIN",
+  PRESIDENT: "PRESIDENT",
+  GENERAL_SECRETARY: "GENERAL_SECRETARY",
+  JOINT_SECRETARY: "JOINT_SECRETARY",
+  EC_MEMBER: "EC_MEMBER",
+  MEMBER: "MEMBER",
 };
 
-const ROLE = getRole();
+const ADMIN_ROLES = [
+  ROLES.SUPER_ADMIN,
+  ROLES.PRESIDENT,
+];
 
-const ADMIN_ROLES = ["SUPER_ADMIN", "PRESIDENT"];
-const OFFICE_ROLES = ["EC_MEMBER", "GENERAL_SECRETARY", "JOINT_SECRETARY"];
+const OFFICE_ROLES = [
+  ROLES.GENERAL_SECRETARY,
+  ROLES.JOINT_SECRETARY,
+  ROLES.EC_MEMBER,
+];
 
-const STATUS_COLORS = {
-  OPEN: "#fde68a",
-  FORWARDED: "#bfdbfe",
-  IN_PROGRESS: "#60a5fa",
-  RESOLVED: "#86efac",
-  CLOSED: "#e5e7eb",
-};
+const STATUS_FLOW = [
+  "OPEN",
+  "FORWARDED",
+  "IN_PROGRESS",
+  "RESOLVED",
+  "CLOSED",
+];
 
-export default function Complaint() {
-  const [complaints, setComplaints] = useState([]);
-  const [loading, setLoading] = useState(true);
-
-  const [form, setForm] = useState({
-    subject: "",
-    description: "",
-    priority: "NORMAL",
-  });
-
-  useEffect(() => {
-    loadComplaints();
-  }, []);
-
-  /* =========================
-     LOAD COMPLAINTS
-  ========================= */
-  const loadComplaints = async () => {
+/* =====================================================
+   1️⃣ MEMBER → CREATE COMPLAINT
+===================================================== */
+router.post(
+  "/create",
+  verifyToken,
+  checkRole(ROLES.MEMBER),
+  async (req, res) => {
     try {
-      let url = "/api/complaints/all";
+      const { subject, description, priority = "NORMAL" } = req.body;
 
-      if (ROLE === "MEMBER") url = "/api/complaints/my";
-      if (OFFICE_ROLES.includes(ROLE)) url = "/api/complaints/assigned";
+      if (!subject || !description) {
+        return res
+          .status(400)
+          .json({ error: "Subject & description required" });
+      }
 
-      const res = await api.get(url);
-      setComplaints(res.data || []);
+      const { rows } = await pool.query(
+        `
+        INSERT INTO complaints
+        (member_id, subject, description, priority, status)
+        VALUES ($1,$2,$3,$4,'OPEN')
+        RETURNING id
+        `,
+        [req.user.id, subject, description, priority]
+      );
+
+      await logAudit(
+        "CREATE",
+        "COMPLAINT",
+        rows[0].id,
+        req.user.id
+      );
+
+      res.status(201).json({
+        message: "Complaint submitted successfully",
+      });
     } catch (err) {
-      console.error("Load complaints error 👉", err);
-      alert("Failed to load complaints");
-    } finally {
-      setLoading(false);
+      console.error("CREATE COMPLAINT ERROR 👉", err.message);
+      res.status(500).json({ error: "Complaint creation failed" });
     }
-  };
+  }
+);
 
-  /* =========================
-     CREATE COMPLAINT
-  ========================= */
-  const submitComplaint = async () => {
-    if (!form.subject || !form.description) {
-      alert("Subject & description required");
-      return;
-    }
-
+/* =====================================================
+   2️⃣ MEMBER → VIEW OWN COMPLAINTS
+===================================================== */
+router.get(
+  "/my",
+  verifyToken,
+  checkRole(ROLES.MEMBER),
+  async (req, res) => {
     try {
-      await api.post("/api/complaints/create", form);
-      setForm({ subject: "", description: "", priority: "NORMAL" });
-      loadComplaints();
-    } catch {
-      alert("Failed to submit complaint");
+      const { rows } = await pool.query(
+        `
+        SELECT *
+        FROM complaints
+        WHERE member_id=$1
+        ORDER BY created_at DESC
+        `,
+        [req.user.id]
+      );
+
+      res.json(rows);
+    } catch (err) {
+      res.status(500).json({ error: "Failed to fetch complaints" });
     }
-  };
+  }
+);
 
-  /* =========================
-     ADMIN → ASSIGN
-  ========================= */
-  const assignComplaint = async (id, role) => {
-    if (!role) return alert("Select role");
+/* =====================================================
+   3️⃣ ADMIN → VIEW ALL COMPLAINTS
+===================================================== */
+router.get(
+  "/all",
+  verifyToken,
+  checkRole(...ADMIN_ROLES),
+  async (req, res) => {
+    try {
+      const { rows } = await pool.query(
+        `
+        SELECT
+          c.*,
+          u.name AS member_name
+        FROM complaints c
+        JOIN users u ON u.id = c.member_id
+        ORDER BY c.created_at DESC
+        `
+      );
 
-    await api.put(`/api/complaints/assign/${id}`, {
-      assigned_role: role,
-    });
-    loadComplaints();
-  };
+      res.json(rows);
+    } catch (err) {
+      res.status(500).json({ error: "Failed to fetch complaints" });
+    }
+  }
+);
 
-  /* =========================
-     OFFICE → UPDATE STATUS
-  ========================= */
-  const updateStatus = async (id, status) => {
-    if (!status) return;
-    await api.put(`/api/complaints/update/${id}`, { status });
-    loadComplaints();
-  };
+/* =====================================================
+   4️⃣ ADMIN → ASSIGN / FORWARD
+===================================================== */
+router.put(
+  "/assign/:id",
+  verifyToken,
+  checkRole(...ADMIN_ROLES),
+  async (req, res) => {
+    try {
+      const { assigned_role } = req.body;
 
-  return (
-    <>
-      <Navbar />
+      if (!OFFICE_ROLES.includes(assigned_role)) {
+        return res
+          .status(400)
+          .json({ error: "Invalid assigned role" });
+      }
 
-      <div style={page}>
-        <h2 style={title}>📢 Complaint Management</h2>
+      await pool.query(
+        `
+        UPDATE complaints
+        SET
+          assigned_role=$1,
+          assigned_by=$2,
+          status='FORWARDED',
+          updated_at=NOW()
+        WHERE id=$3
+        `,
+        [assigned_role, req.user.id, req.params.id]
+      );
 
-        {/* ================= CREATE ================= */}
-        {!ADMIN_ROLES.includes(ROLE) && (
-          <div style={card}>
-            <h3>Raise a Complaint</h3>
+      await logAudit(
+        "ASSIGN",
+        "COMPLAINT",
+        req.params.id,
+        req.user.id
+      );
 
-            <input
-              style={input}
-              placeholder="Subject"
-              value={form.subject}
-              onChange={(e) =>
-                setForm({ ...form, subject: e.target.value })
-              }
-            />
+      res.json({ message: "Complaint forwarded successfully" });
+    } catch (err) {
+      res.status(500).json({ error: "Assign failed" });
+    }
+  }
+);
 
-            <textarea
-              style={textarea}
-              placeholder="Description"
-              value={form.description}
-              onChange={(e) =>
-                setForm({ ...form, description: e.target.value })
-              }
-            />
+/* =====================================================
+   5️⃣ OFFICE → VIEW ASSIGNED
+===================================================== */
+router.get(
+  "/assigned",
+  verifyToken,
+  checkRole(...OFFICE_ROLES),
+  async (req, res) => {
+    try {
+      const { rows } = await pool.query(
+        `
+        SELECT *
+        FROM complaints
+        WHERE assigned_role=$1
+        ORDER BY updated_at DESC
+        `,
+        [req.user.role]
+      );
 
-            <select
-              style={input}
-              value={form.priority}
-              onChange={(e) =>
-                setForm({ ...form, priority: e.target.value })
-              }
-            >
-              <option value="NORMAL">Normal</option>
-              <option value="HIGH">High</option>
-            </select>
+      res.json(rows);
+    } catch (err) {
+      res.status(500).json({ error: "Failed to load assigned complaints" });
+    }
+  }
+);
 
-            <button style={btnPrimary} onClick={submitComplaint}>
-              Submit
-            </button>
-          </div>
-        )}
+/* =====================================================
+   6️⃣ OFFICE → UPDATE STATUS
+===================================================== */
+router.put(
+  "/update/:id",
+  verifyToken,
+  checkRole(...OFFICE_ROLES),
+  async (req, res) => {
+    try {
+      const { status } = req.body;
 
-        {/* ================= LIST ================= */}
-        <h3 style={{ marginBottom: 10 }}>Complaints</h3>
+      if (!STATUS_FLOW.includes(status)) {
+        return res.status(400).json({ error: "Invalid status" });
+      }
 
-        {loading && <p>Loading…</p>}
-        {!loading && complaints.length === 0 && (
-          <p>No complaints found</p>
-        )}
+      await pool.query(
+        `
+        UPDATE complaints
+        SET status=$1, updated_at=NOW()
+        WHERE id=$2
+        `,
+        [status, req.params.id]
+      );
 
-        <div style={grid}>
-          {complaints.map((c) => (
-            <div key={c.id} style={card}>
-              <div style={cardHeader}>
-                <strong>{c.subject}</strong>
-                <span
-                  style={{
-                    ...badge,
-                    background: STATUS_COLORS[c.status],
-                  }}
-                >
-                  {c.status}
-                </span>
-              </div>
+      await logAudit(
+        "UPDATE",
+        "COMPLAINT",
+        req.params.id,
+        req.user.id
+      );
 
-              <p style={{ marginTop: 8 }}>{c.description}</p>
+      res.json({ message: "Status updated" });
+    } catch (err) {
+      res.status(500).json({ error: "Update failed" });
+    }
+  }
+);
 
-              <small>
-                Priority: {c.priority} <br />
-                By: {c.member_name || "You"} <br />
-                {new Date(c.created_at).toLocaleString()}
-              </small>
+/* =====================================================
+   7️⃣ ADMIN → DASHBOARD STATS
+===================================================== */
+router.get(
+  "/stats",
+  verifyToken,
+  checkRole(...ADMIN_ROLES),
+  async (req, res) => {
+    const { rows } = await pool.query(`
+      SELECT
+        COUNT(*) FILTER (WHERE status='OPEN') AS open,
+        COUNT(*) FILTER (WHERE status='FORWARDED') AS forwarded,
+        COUNT(*) FILTER (WHERE status='IN_PROGRESS') AS in_progress,
+        COUNT(*) FILTER (WHERE status='RESOLVED') AS resolved,
+        COUNT(*) FILTER (WHERE status='CLOSED') AS closed
+      FROM complaints
+    `);
 
-              {/* ADMIN ASSIGN */}
-              {ADMIN_ROLES.includes(ROLE) && c.status === "OPEN" && (
-                <div style={actionRow}>
-                  <select
-                    onChange={(e) =>
-                      assignComplaint(c.id, e.target.value)
-                    }
-                  >
-                    <option value="">Assign to</option>
-                    {OFFICE_ROLES.map((r) => (
-                      <option key={r} value={r}>
-                        {r.replaceAll("_", " ")}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-              )}
+    res.json(rows[0]);
+  }
+);
 
-              {/* OFFICE UPDATE */}
-              {OFFICE_ROLES.includes(ROLE) &&
-                ["FORWARDED", "IN_PROGRESS"].includes(c.status) && (
-                  <div style={actionRow}>
-                    <select
-                      onChange={(e) =>
-                        updateStatus(c.id, e.target.value)
-                      }
-                    >
-                      <option value="">Update status</option>
-                      <option value="IN_PROGRESS">In Progress</option>
-                      <option value="RESOLVED">Resolved</option>
-                    </select>
-                  </div>
-                )}
-            </div>
-          ))}
-        </div>
-      </div>
-    </>
-  );
-}
-
-/* =========================
-   🎨 STYLES
-========================= */
-const page = {
-  padding: 30,
-  background: "#f1f5f9",
-  minHeight: "100vh",
-};
-
-const title = { fontSize: 26, fontWeight: 700, marginBottom: 20 };
-
-const grid = {
-  display: "grid",
-  gridTemplateColumns: "repeat(auto-fit, minmax(300px, 1fr))",
-  gap: 16,
-};
-
-const card = {
-  background: "#fff",
-  padding: 18,
-  borderRadius: 14,
-  boxShadow: "0 8px 20px rgba(0,0,0,0.06)",
-};
-
-const cardHeader = {
-  display: "flex",
-  justifyContent: "space-between",
-  alignItems: "center",
-};
-
-const badge = {
-  padding: "4px 10px",
-  borderRadius: 12,
-  fontSize: 12,
-  fontWeight: 600,
-};
-
-const actionRow = {
-  display: "flex",
-  gap: 10,
-  marginTop: 12,
-};
-
-const input = {
-  width: "100%",
-  padding: 10,
-  marginBottom: 10,
-  borderRadius: 8,
-  border: "1px solid #cbd5f5",
-};
-
-const textarea = {
-  width: "100%",
-  height: 90,
-  padding: 10,
-  borderRadius: 8,
-  border: "1px solid #cbd5f5",
-  marginBottom: 10,
-};
-
-const btnPrimary = {
-  background: "#2563eb",
-  color: "#fff",
-  border: "none",
-  padding: "8px 16px",
-  borderRadius: 8,
-  cursor: "pointer",
-};
+module.exports = router;
