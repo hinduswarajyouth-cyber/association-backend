@@ -1,347 +1,290 @@
-const express = require("express");
-const pool = require("../db");
-
-const verifyToken = require("../middleware/verifyToken");
-const checkRole = require("../middleware/checkRole");
-const logAudit = require("../utils/auditLogger");
-
-const router = express.Router();
+import { useEffect, useState } from "react";
+import api from "../api/api";
+import Navbar from "../components/Navbar";
 
 /* =========================
-   ROLES
+   SAFE ROLE FROM JWT
 ========================= */
-const ROLES = {
-  SUPER_ADMIN: "SUPER_ADMIN",
-  PRESIDENT: "PRESIDENT",
-  GENERAL_SECRETARY: "GENERAL_SECRETARY",
-  JOINT_SECRETARY: "JOINT_SECRETARY",
-  EC_MEMBER: "EC_MEMBER",
-  MEMBER: "MEMBER",
+const getRole = () => {
+  try {
+    const token = localStorage.getItem("token");
+    if (!token) return null;
+    return JSON.parse(atob(token.split(".")[1])).role;
+  } catch {
+    return null;
+  }
 };
 
-const ADMIN_ROLES = [
-  ROLES.SUPER_ADMIN,
-  ROLES.PRESIDENT,
-];
+const ROLE = getRole();
 
-const OFFICE_ROLES = [
-  ROLES.GENERAL_SECRETARY,
-  ROLES.JOINT_SECRETARY,
-  ROLES.EC_MEMBER,
-];
+const ADMIN_ROLES = ["SUPER_ADMIN", "PRESIDENT"];
+const OFFICE_ROLES = ["EC_MEMBER", "GENERAL_SECRETARY", "JOINT_SECRETARY"];
 
-const STATUS_FLOW = [
-  "OPEN",
-  "FORWARDED",
-  "IN_PROGRESS",
-  "RESOLVED",
-  "CLOSED",
-];
+const STATUS_COLORS = {
+  OPEN: "#fde68a",
+  FORWARDED: "#bfdbfe",
+  IN_PROGRESS: "#60a5fa",
+  RESOLVED: "#86efac",
+  CLOSED: "#e5e7eb",
+};
 
-/* =====================================================
-   1️⃣ MEMBER → CREATE COMPLAINT
-===================================================== */
-router.post(
-  "/create",
-  verifyToken,
-  checkRole(ROLES.MEMBER),
-  async (req, res) => {
+export default function Complaint() {
+  const [complaints, setComplaints] = useState([]);
+  const [loading, setLoading] = useState(true);
+
+  const [form, setForm] = useState({
+    subject: "",
+    description: "",
+    priority: "NORMAL",
+  });
+
+  useEffect(() => {
+    loadComplaints();
+  }, []);
+
+  /* =========================
+     LOAD COMPLAINTS
+  ========================= */
+  const loadComplaints = async () => {
     try {
-      const { subject, description, priority = "NORMAL" } = req.body;
+      let url = "/api/complaints/all";
 
-      if (!subject || !description) {
-        return res.status(400).json({ error: "Subject and description required" });
-      }
+      if (ROLE === "MEMBER") url = "/api/complaints/my";
+      if (OFFICE_ROLES.includes(ROLE)) url = "/api/complaints/assigned";
 
-      const { rows } = await pool.query(
-        `
-        INSERT INTO complaints
-        (member_id, subject, description, priority)
-        VALUES ($1,$2,$3,$4)
-        RETURNING id
-        `,
-        [req.user.id, subject, description, priority]
-      );
-
-      await logAudit("CREATE", "COMPLAINT", rows[0].id, req.user.name);
-
-      res.status(201).json({ message: "Complaint submitted successfully" });
+      const res = await api.get(url);
+      setComplaints(res.data || []);
     } catch (err) {
-      console.error("CREATE COMPLAINT 👉", err);
-      res.status(500).json({ error: "Complaint creation failed" });
+      console.error("Load complaints error 👉", err);
+      alert("Failed to load complaints");
+    } finally {
+      setLoading(false);
     }
-  }
-);
+  };
 
-/* =====================================================
-   2️⃣ MEMBER → VIEW OWN COMPLAINTS
-===================================================== */
-router.get(
-  "/my",
-  verifyToken,
-  checkRole(ROLES.MEMBER),
-  async (req, res) => {
+  /* =========================
+     CREATE COMPLAINT
+  ========================= */
+  const submitComplaint = async () => {
+    if (!form.subject || !form.description) {
+      alert("Subject & description required");
+      return;
+    }
+
     try {
-      const { rows } = await pool.query(
-        `
-        SELECT *
-        FROM complaints
-        WHERE member_id=$1
-        ORDER BY created_at DESC
-        `,
-        [req.user.id]
-      );
-
-      res.json(rows);
+      await api.post("/api/complaints/create", form);
+      setForm({ subject: "", description: "", priority: "NORMAL" });
+      loadComplaints();
     } catch {
-      res.status(500).json({ error: "Failed to fetch complaints" });
+      alert("Failed to submit complaint");
     }
-  }
-);
+  };
 
-/* =====================================================
-   3️⃣ ADMIN → VIEW ALL COMPLAINTS
-===================================================== */
-router.get(
-  "/all",
-  verifyToken,
-  checkRole(...ADMIN_ROLES),
-  async (req, res) => {
-    try {
-      const { rows } = await pool.query(`
-        SELECT c.*, u.name AS member_name
-        FROM complaints c
-        JOIN users u ON u.id = c.member_id
-        ORDER BY c.created_at DESC
-      `);
+  /* =========================
+     ADMIN → ASSIGN
+  ========================= */
+  const assignComplaint = async (id, role) => {
+    if (!role) return alert("Select role");
 
-      res.json(rows);
-    } catch {
-      res.status(500).json({ error: "Failed to fetch complaints" });
-    }
-  }
-);
+    await api.put(`/api/complaints/assign/${id}`, {
+      assigned_role: role,
+    });
+    loadComplaints();
+  };
 
-/* =====================================================
-   4️⃣ ADMIN → ASSIGN / FORWARD COMPLAINT
-===================================================== */
-router.put(
-  "/assign/:id",
-  verifyToken,
-  checkRole(...ADMIN_ROLES),
-  async (req, res) => {
-    try {
-      const complaintId = Number(req.params.id);
-      const { assigned_role, admin_remark } = req.body;
+  /* =========================
+     OFFICE → UPDATE STATUS
+  ========================= */
+  const updateStatus = async (id, status) => {
+    if (!status) return;
+    await api.put(`/api/complaints/update/${id}`, { status });
+    loadComplaints();
+  };
 
-      if (!OFFICE_ROLES.includes(assigned_role)) {
-        return res.status(400).json({ error: "Invalid assigned role" });
-      }
+  return (
+    <>
+      <Navbar />
 
-      await pool.query(
-        `
-        UPDATE complaints SET
-          assigned_role=$1,
-          assigned_by=$2,
-          admin_remark=$3,
-          status='FORWARDED',
-          updated_at=NOW()
-        WHERE id=$4
-        `,
-        [assigned_role, req.user.id, admin_remark || null, complaintId]
-      );
+      <div style={page}>
+        <h2 style={title}>📢 Complaint Management</h2>
 
-      await logAudit("ASSIGN", "COMPLAINT", complaintId, req.user.name, {
-        assigned_role,
-      });
+        {/* ================= CREATE ================= */}
+        {!ADMIN_ROLES.includes(ROLE) && (
+          <div style={card}>
+            <h3>Raise a Complaint</h3>
 
-      res.json({ message: "Complaint forwarded successfully" });
-    } catch {
-      res.status(500).json({ error: "Forward failed" });
-    }
-  }
-);
+            <input
+              style={input}
+              placeholder="Subject"
+              value={form.subject}
+              onChange={(e) =>
+                setForm({ ...form, subject: e.target.value })
+              }
+            />
 
-/* =====================================================
-   5️⃣ OFFICE ROLE → VIEW ASSIGNED COMPLAINTS
-===================================================== */
-router.get(
-  "/assigned",
-  verifyToken,
-  checkRole(...OFFICE_ROLES),
-  async (req, res) => {
-    try {
-      const { rows } = await pool.query(
-        `
-        SELECT *
-        FROM complaints
-        WHERE assigned_role=$1
-        ORDER BY updated_at DESC
-        `,
-        [req.user.role]
-      );
+            <textarea
+              style={textarea}
+              placeholder="Description"
+              value={form.description}
+              onChange={(e) =>
+                setForm({ ...form, description: e.target.value })
+              }
+            />
 
-      res.json(rows);
-    } catch {
-      res.status(500).json({ error: "Failed to fetch assigned complaints" });
-    }
-  }
-);
+            <select
+              style={input}
+              value={form.priority}
+              onChange={(e) =>
+                setForm({ ...form, priority: e.target.value })
+              }
+            >
+              <option value="NORMAL">Normal</option>
+              <option value="HIGH">High</option>
+            </select>
 
-/* =====================================================
-   6️⃣ OFFICE ROLE → UPDATE STATUS
-===================================================== */
-router.put(
-  "/update/:id",
-  verifyToken,
-  checkRole(...OFFICE_ROLES),
-  async (req, res) => {
-    try {
-      const complaintId = Number(req.params.id);
-      const { status, admin_remark } = req.body;
+            <button style={btnPrimary} onClick={submitComplaint}>
+              Submit
+            </button>
+          </div>
+        )}
 
-      if (!STATUS_FLOW.includes(status)) {
-        return res.status(400).json({ error: "Invalid status" });
-      }
+        {/* ================= LIST ================= */}
+        <h3 style={{ marginBottom: 10 }}>Complaints</h3>
 
-      await pool.query(
-        `
-        UPDATE complaints SET
-          status=$1,
-          admin_remark=COALESCE($2, admin_remark),
-          updated_at=NOW()
-        WHERE id=$3
-        `,
-        [status, admin_remark || null, complaintId]
-      );
+        {loading && <p>Loading…</p>}
+        {!loading && complaints.length === 0 && (
+          <p>No complaints found</p>
+        )}
 
-      await logAudit("UPDATE", "COMPLAINT", complaintId, req.user.name, {
-        status,
-      });
+        <div style={grid}>
+          {complaints.map((c) => (
+            <div key={c.id} style={card}>
+              <div style={cardHeader}>
+                <strong>{c.subject}</strong>
+                <span
+                  style={{
+                    ...badge,
+                    background: STATUS_COLORS[c.status],
+                  }}
+                >
+                  {c.status}
+                </span>
+              </div>
 
-      res.json({ message: "Complaint updated successfully" });
-    } catch {
-      res.status(500).json({ error: "Update failed" });
-    }
-  }
-);
+              <p style={{ marginTop: 8 }}>{c.description}</p>
 
-/* =====================================================
-   7️⃣ COMPLAINT COMMENTS (ADD)
-===================================================== */
-router.post(
-  "/:id/comment",
-  verifyToken,
-  async (req, res) => {
-    const { comment } = req.body;
-    const complaintId = Number(req.params.id);
+              <small>
+                Priority: {c.priority} <br />
+                By: {c.member_name || "You"} <br />
+                {new Date(c.created_at).toLocaleString()}
+              </small>
 
-    if (!comment) {
-      return res.status(400).json({ error: "Comment required" });
-    }
+              {/* ADMIN ASSIGN */}
+              {ADMIN_ROLES.includes(ROLE) && c.status === "OPEN" && (
+                <div style={actionRow}>
+                  <select
+                    onChange={(e) =>
+                      assignComplaint(c.id, e.target.value)
+                    }
+                  >
+                    <option value="">Assign to</option>
+                    {OFFICE_ROLES.map((r) => (
+                      <option key={r} value={r}>
+                        {r.replaceAll("_", " ")}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              )}
 
-    await pool.query(
-      `
-      INSERT INTO complaint_comments
-      (complaint_id, comment, created_by)
-      VALUES ($1,$2,$3)
-      `,
-      [complaintId, comment, req.user.name]
-    );
+              {/* OFFICE UPDATE */}
+              {OFFICE_ROLES.includes(ROLE) &&
+                ["FORWARDED", "IN_PROGRESS"].includes(c.status) && (
+                  <div style={actionRow}>
+                    <select
+                      onChange={(e) =>
+                        updateStatus(c.id, e.target.value)
+                      }
+                    >
+                      <option value="">Update status</option>
+                      <option value="IN_PROGRESS">In Progress</option>
+                      <option value="RESOLVED">Resolved</option>
+                    </select>
+                  </div>
+                )}
+            </div>
+          ))}
+        </div>
+      </div>
+    </>
+  );
+}
 
-    await logAudit("COMMENT", "COMPLAINT", complaintId, req.user.name);
+/* =========================
+   🎨 STYLES
+========================= */
+const page = {
+  padding: 30,
+  background: "#f1f5f9",
+  minHeight: "100vh",
+};
 
-    res.json({ message: "Comment added" });
-  }
-);
+const title = { fontSize: 26, fontWeight: 700, marginBottom: 20 };
 
-/* =====================================================
-   8️⃣ COMPLAINT COMMENTS (VIEW)
-===================================================== */
-router.get(
-  "/:id/comments",
-  verifyToken,
-  async (req, res) => {
-    const { rows } = await pool.query(
-      `
-      SELECT comment, created_by, created_at
-      FROM complaint_comments
-      WHERE complaint_id=$1
-      ORDER BY created_at ASC
-      `,
-      [Number(req.params.id)]
-    );
+const grid = {
+  display: "grid",
+  gridTemplateColumns: "repeat(auto-fit, minmax(300px, 1fr))",
+  gap: 16,
+};
 
-    res.json(rows);
-  }
-);
+const card = {
+  background: "#fff",
+  padding: 18,
+  borderRadius: 14,
+  boxShadow: "0 8px 20px rgba(0,0,0,0.06)",
+};
 
-/* =====================================================
-   9️⃣ DASHBOARD STATS (ADMIN)
-===================================================== */
-router.get(
-  "/stats",
-  verifyToken,
-  checkRole(...ADMIN_ROLES),
-  async (req, res) => {
-    const { rows } = await pool.query(`
-      SELECT
-        COUNT(*) FILTER (WHERE status='OPEN') AS open,
-        COUNT(*) FILTER (WHERE status='FORWARDED') AS forwarded,
-        COUNT(*) FILTER (WHERE status='IN_PROGRESS') AS in_progress,
-        COUNT(*) FILTER (WHERE status='RESOLVED') AS resolved,
-        COUNT(*) FILTER (WHERE status='CLOSED') AS closed
-      FROM complaints
-    `);
+const cardHeader = {
+  display: "flex",
+  justifyContent: "space-between",
+  alignItems: "center",
+};
 
-    res.json(rows[0]);
-  }
-);
+const badge = {
+  padding: "4px 10px",
+  borderRadius: 12,
+  fontSize: 12,
+  fontWeight: 600,
+};
 
-/* =====================================================
-   🔟 ADMIN → CLOSE COMPLAINT
-===================================================== */
-router.put(
-  "/close/:id",
-  verifyToken,
-  checkRole(...ADMIN_ROLES),
-  async (req, res) => {
-    const complaintId = Number(req.params.id);
+const actionRow = {
+  display: "flex",
+  gap: 10,
+  marginTop: 12,
+};
 
-    await pool.query(
-      `
-      UPDATE complaints
-      SET status='CLOSED', updated_at=NOW()
-      WHERE id=$1
-      `,
-      [complaintId]
-    );
+const input = {
+  width: "100%",
+  padding: 10,
+  marginBottom: 10,
+  borderRadius: 8,
+  border: "1px solid #cbd5f5",
+};
 
-    await logAudit("CLOSE", "COMPLAINT", complaintId, req.user.name);
+const textarea = {
+  width: "100%",
+  height: 90,
+  padding: 10,
+  borderRadius: 8,
+  border: "1px solid #cbd5f5",
+  marginBottom: 10,
+};
 
-    res.json({ message: "Complaint closed successfully" });
-  }
-);
-
-/* =====================================================
-   1️⃣1️⃣ ADMIN → DELETE COMPLAINT
-===================================================== */
-router.delete(
-  "/delete/:id",
-  verifyToken,
-  checkRole(...ADMIN_ROLES),
-  async (req, res) => {
-    const complaintId = Number(req.params.id);
-
-    await pool.query(
-      "DELETE FROM complaints WHERE id=$1",
-      [complaintId]
-    );
-
-    await logAudit("DELETE", "COMPLAINT", complaintId, req.user.name);
-
-    res.json({ message: "Complaint deleted successfully" });
-  }
-);
-
-module.exports = router;
+const btnPrimary = {
+  background: "#2563eb",
+  color: "#fff",
+  border: "none",
+  padding: "8px 16px",
+  borderRadius: 8,
+  cursor: "pointer",
+};

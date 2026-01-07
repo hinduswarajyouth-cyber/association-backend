@@ -1,113 +1,275 @@
-const express = require("express");
-const pool = require("../db");
-const verifyToken = require("../middleware/verifyToken");
-const checkRole = require("../middleware/checkRole");
+import { useEffect, useState } from "react";
+import api from "../api/api";
+import Navbar from "../components/Navbar";
 
-const router = express.Router();
-
-/* =====================================================
-   💡 SUBMIT SUGGESTION (ALL LOGGED USERS)
-===================================================== */
-router.post("/", verifyToken, async (req, res) => {
+/* =========================
+   SAFE ROLE FROM JWT
+========================= */
+const getRole = () => {
   try {
-    const { title, message, type = "GENERAL" } = req.body;
-
-    if (!message) {
-      return res.status(400).json({ error: "Message required" });
-    }
-
-    await pool.query(
-      `
-      INSERT INTO suggestions (member_id, title, message, type)
-      VALUES ($1, $2, $3, $4)
-      `,
-      [req.user.id, title || null, message, type]
-    );
-
-    res.json({ message: "Suggestion submitted successfully" });
-  } catch (err) {
-    console.error("SUBMIT SUGGESTION ERROR 👉", err.message);
-    res.status(500).json({ error: "Failed to submit suggestion" });
+    const token = localStorage.getItem("token");
+    if (!token) return null;
+    return JSON.parse(atob(token.split(".")[1])).role;
+  } catch {
+    return null;
   }
-});
+};
 
-/* =====================================================
-   📊 DASHBOARD SUGGESTIONS (ALL USERS)
-   👉 Shows latest 5
-===================================================== */
-router.get("/dashboard", verifyToken, async (req, res) => {
-  try {
-    const result = await pool.query(`
-      SELECT
-        s.id,
-        s.title,
-        s.message,
-        s.type,
-        s.created_at,
-        u.name AS member_name
-      FROM suggestions s
-      JOIN users u ON u.id = s.member_id
-      ORDER BY s.created_at DESC
-      LIMIT 5
-    `);
+const ROLE = getRole();
+const ADMIN_ROLES = ["SUPER_ADMIN", "PRESIDENT"];
 
-    res.json(result.rows);
-  } catch (err) {
-    console.error("DASHBOARD SUGGESTIONS ERROR 👉", err.message);
-    res.status(500).json({ error: "Failed to load suggestions" });
-  }
-});
+const STATUS_COLORS = {
+  PENDING: "#fde68a",
+  APPROVED: "#86efac",
+  REJECTED: "#fecaca",
+};
 
-/* =====================================================
-   📋 ALL SUGGESTIONS (ADMIN / PRESIDENT)
-===================================================== */
-router.get(
-  "/",
-  verifyToken,
-  checkRole("SUPER_ADMIN", "PRESIDENT"),
-  async (req, res) => {
+export default function SuggestionBox() {
+  const [suggestions, setSuggestions] = useState([]);
+  const [loading, setLoading] = useState(true);
+
+  const [form, setForm] = useState({
+    title: "",
+    message: "",
+    type: "GENERAL",
+  });
+
+  useEffect(() => {
+    loadSuggestions();
+  }, []);
+
+  /* =========================
+     LOAD SUGGESTIONS
+  ========================= */
+  const loadSuggestions = async () => {
     try {
-      const result = await pool.query(`
-        SELECT
-          s.id,
-          s.title,
-          s.message,
-          s.type,
-          s.created_at,
-          u.name AS member_name
-        FROM suggestions s
-        JOIN users u ON u.id = s.member_id
-        ORDER BY s.created_at DESC
-      `);
+      const url = ADMIN_ROLES.includes(ROLE)
+        ? "/api/suggestions/all"
+        : "/api/suggestions/my";
 
-      res.json(result.rows);
+      const res = await api.get(url);
+      setSuggestions(res.data || []);
     } catch (err) {
-      console.error("GET ALL SUGGESTIONS ERROR 👉", err.message);
-      res.status(500).json({ error: "Failed to load suggestions" });
+      console.error("Load suggestions error 👉", err);
+      alert("Failed to load suggestions");
+    } finally {
+      setLoading(false);
     }
-  }
-);
+  };
 
-/* =====================================================
-   🗑️ DELETE SUGGESTION (SUPER_ADMIN ONLY) – OPTIONAL
-===================================================== */
-router.delete(
-  "/:id",
-  verifyToken,
-  checkRole("SUPER_ADMIN"),
-  async (req, res) => {
+  /* =========================
+     SUBMIT SUGGESTION
+  ========================= */
+  const submit = async () => {
+    if (!form.message) {
+      alert("Message required");
+      return;
+    }
+
     try {
-      await pool.query(
-        `DELETE FROM suggestions WHERE id = $1`,
-        [req.params.id]
-      );
-
-      res.json({ message: "Suggestion deleted successfully" });
+      await api.post("/api/suggestions", form);
+      setForm({ title: "", message: "", type: "GENERAL" });
+      loadSuggestions();
     } catch (err) {
-      console.error("DELETE SUGGESTION ERROR 👉", err.message);
-      res.status(500).json({ error: "Failed to delete suggestion" });
+      console.error("Submit suggestion error 👉", err);
+      alert("Failed to submit suggestion");
     }
-  }
-);
+  };
 
-module.exports = router;
+  /* =========================
+     ADMIN → UPDATE STATUS
+  ========================= */
+  const updateStatus = async (id, status) => {
+    try {
+      await api.put(`/api/suggestions/${id}/status`, { status });
+      loadSuggestions();
+    } catch (err) {
+      console.error("Update status error 👉", err);
+      alert("Action failed");
+    }
+  };
+
+  return (
+    <>
+      <Navbar />
+
+      <div style={page}>
+        <h2 style={title}>💡 Suggestion Box</h2>
+
+        {/* ================= CREATE ================= */}
+        <div style={card}>
+          <h3>Submit a Suggestion</h3>
+
+          <input
+            style={input}
+            placeholder="Title (optional)"
+            value={form.title}
+            onChange={(e) => setForm({ ...form, title: e.target.value })}
+          />
+
+          <select
+            style={input}
+            value={form.type}
+            onChange={(e) => setForm({ ...form, type: e.target.value })}
+          >
+            <option value="GENERAL">General</option>
+            <option value="IMPROVEMENT">Improvement</option>
+            <option value="ISSUE">Issue</option>
+          </select>
+
+          <textarea
+            style={textarea}
+            placeholder="Your suggestion *"
+            value={form.message}
+            onChange={(e) => setForm({ ...form, message: e.target.value })}
+          />
+
+          <button style={btnPrimary} onClick={submit}>
+            Submit
+          </button>
+        </div>
+
+        {/* ================= LIST ================= */}
+        <h3 style={{ marginBottom: 10 }}>Suggestions</h3>
+
+        {loading && <p>Loading…</p>}
+        {!loading && suggestions.length === 0 && (
+          <p>No suggestions found</p>
+        )}
+
+        <div style={grid}>
+          {suggestions.map((s) => (
+            <div key={s.id} style={card}>
+              <div style={cardHeader}>
+                <strong>{s.title || "—"}</strong>
+                <span
+                  style={{
+                    ...badge,
+                    background: STATUS_COLORS[s.status],
+                  }}
+                >
+                  {s.status}
+                </span>
+              </div>
+
+              <p style={{ marginTop: 8 }}>{s.message}</p>
+
+              <small>
+                Type: {s.type}
+                <br />
+                By: {s.member_name || "You"}
+                <br />
+                {new Date(s.created_at).toLocaleString()}
+              </small>
+
+              {/* ADMIN ACTIONS */}
+              {ADMIN_ROLES.includes(ROLE) && s.status === "PENDING" && (
+                <div style={actionRow}>
+                  <button
+                    style={btnSuccess}
+                    onClick={() => updateStatus(s.id, "APPROVED")}
+                  >
+                    Approve
+                  </button>
+                  <button
+                    style={btnDanger}
+                    onClick={() => updateStatus(s.id, "REJECTED")}
+                  >
+                    Reject
+                  </button>
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+      </div>
+    </>
+  );
+}
+
+/* =========================
+   🎨 STYLES
+========================= */
+const page = {
+  padding: 30,
+  background: "#f1f5f9",
+  minHeight: "100vh",
+};
+
+const title = { fontSize: 26, fontWeight: 700, marginBottom: 20 };
+
+const grid = {
+  display: "grid",
+  gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))",
+  gap: 16,
+};
+
+const card = {
+  background: "#fff",
+  padding: 18,
+  borderRadius: 14,
+  boxShadow: "0 8px 20px rgba(0,0,0,0.06)",
+};
+
+const cardHeader = {
+  display: "flex",
+  justifyContent: "space-between",
+  alignItems: "center",
+};
+
+const badge = {
+  padding: "4px 10px",
+  borderRadius: 12,
+  fontSize: 12,
+  fontWeight: 600,
+};
+
+const actionRow = {
+  display: "flex",
+  gap: 10,
+  marginTop: 12,
+};
+
+const input = {
+  width: "100%",
+  padding: 10,
+  marginBottom: 10,
+  borderRadius: 8,
+  border: "1px solid #cbd5f5",
+};
+
+const textarea = {
+  width: "100%",
+  height: 80,
+  padding: 10,
+  borderRadius: 8,
+  border: "1px solid #cbd5f5",
+  marginBottom: 10,
+};
+
+const btnPrimary = {
+  background: "#2563eb",
+  color: "#fff",
+  border: "none",
+  padding: "8px 16px",
+  borderRadius: 8,
+  cursor: "pointer",
+};
+
+const btnSuccess = {
+  background: "#16a34a",
+  color: "#fff",
+  border: "none",
+  padding: "6px 14px",
+  borderRadius: 6,
+  cursor: "pointer",
+};
+
+const btnDanger = {
+  background: "#dc2626",
+  color: "#fff",
+  border: "none",
+  padding: "6px 14px",
+  borderRadius: 6,
+  cursor: "pointer",
+};
