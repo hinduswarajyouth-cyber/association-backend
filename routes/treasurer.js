@@ -17,7 +17,7 @@ router.get(
   checkRole("TREASURER", "SUPER_ADMIN", "PRESIDENT"),
   async (req, res) => {
     try {
-      const result = await pool.query(`
+      const { rows } = await pool.query(`
         SELECT
           c.id,
           c.amount,
@@ -33,7 +33,7 @@ router.get(
         ORDER BY c.created_at DESC
       `);
 
-      res.json({ pending: result.rows });
+      res.json({ pending: rows });
     } catch (err) {
       console.error("PENDING ERROR 👉", err.message);
       res.status(500).json({ error: "Server error" });
@@ -42,41 +42,33 @@ router.get(
 );
 
 /* =====================================================
-   📋 GET APPROVED CONTRIBUTIONS
-   GET /treasurer/approved
+   📊 TREASURER DASHBOARD SUMMARY
+   GET /treasurer/summary
 ===================================================== */
 router.get(
-  "/approved",
+  "/summary",
   verifyToken,
   checkRole("TREASURER", "SUPER_ADMIN", "PRESIDENT"),
   async (req, res) => {
     try {
-      const result = await pool.query(`
+      const { rows } = await pool.query(`
         SELECT
-          c.id,
-          c.amount,
-          c.payment_mode,
-          c.receipt_no,
-          c.receipt_date,
-          u.name AS member_name,
-          f.fund_name
-        FROM contributions c
-        JOIN users u ON u.id = c.member_id
-        JOIN funds f ON f.id = c.fund_id
-        WHERE c.status = 'APPROVED'
-        ORDER BY c.receipt_date DESC NULLS LAST
+          COUNT(*) FILTER (WHERE status='PENDING') AS pending_count,
+          COUNT(*) FILTER (WHERE status='APPROVED') AS approved_count,
+          COALESCE(SUM(amount) FILTER (WHERE status='APPROVED'),0) AS total_collection
+        FROM contributions
       `);
 
-      res.json({ approved: result.rows });
+      res.json(rows[0]);
     } catch (err) {
-      console.error("APPROVED ERROR 👉", err.message);
+      console.error("SUMMARY ERROR 👉", err.message);
       res.status(500).json({ error: "Server error" });
     }
   }
 );
 
 /* =====================================================
-   ✅ APPROVE CONTRIBUTION
+   ✅ APPROVE CONTRIBUTION (LEDGER SAFE)
    PATCH /treasurer/approve/:id
 ===================================================== */
 router.patch(
@@ -91,23 +83,22 @@ router.patch(
 
       await client.query("BEGIN");
 
-      const contribRes = await client.query(
+      const { rows, rowCount } = await client.query(
         `SELECT * FROM contributions WHERE id=$1 FOR UPDATE`,
         [contributionId]
       );
 
-      if (!contribRes.rowCount) throw new Error("Contribution not found");
-      const contribution = contribRes.rows[0];
+      if (!rowCount) throw new Error("Contribution not found");
+      const c = rows[0];
 
-      if (contribution.status !== "PENDING")
-        throw new Error("Already processed");
+      if (c.status !== "PENDING") throw new Error("Already processed");
 
-      const year = new Date(contribution.created_at).getFullYear();
+      const year = new Date(c.created_at).getFullYear();
       if (await isYearClosed(year))
         throw new Error("Financial year closed");
 
-      /* Receipt sequence */
-      const seqRes = await client.query(
+      /* ===== Receipt Number ===== */
+      const seq = await client.query(
         `
         INSERT INTO receipt_sequence (year, last_number)
         VALUES ($1, 1)
@@ -119,11 +110,11 @@ router.patch(
       );
 
       const receiptNo = `REC-${year}-${String(
-        seqRes.rows[0].last_number
+        seq.rows[0].last_number
       ).padStart(6, "0")}`;
 
-      /* Ledger balance */
-      const balRes = await client.query(
+      /* ===== Ledger Balance (SAFE) ===== */
+      const bal = await client.query(
         `
         SELECT COALESCE(balance_after,0) AS balance
         FROM ledger
@@ -131,12 +122,13 @@ router.patch(
         ORDER BY id DESC
         LIMIT 1
         `,
-        [contribution.fund_id]
+        [c.fund_id]
       );
 
       const newBalance =
-        Number(balRes.rows[0].balance) + Number(contribution.amount);
+        Number(bal.rows[0].balance) + Number(c.amount);
 
+      /* ===== Update Contribution ===== */
       await client.query(
         `
         UPDATE contributions
@@ -151,6 +143,7 @@ router.patch(
         [approvedBy, receiptNo, contributionId]
       );
 
+      /* ===== Ledger Entry ===== */
       await client.query(
         `
         INSERT INTO ledger
@@ -160,8 +153,8 @@ router.patch(
         `,
         [
           contributionId,
-          contribution.fund_id,
-          contribution.amount,
+          c.fund_id,
+          c.amount,
           newBalance,
           approvedBy,
         ]
@@ -198,10 +191,9 @@ router.patch(
   async (req, res) => {
     try {
       const { reason } = req.body;
-      if (!reason)
-        return res.status(400).json({ error: "Reason required" });
+      if (!reason) return res.status(400).json({ error: "Reason required" });
 
-      const result = await pool.query(
+      const { rowCount } = await pool.query(
         `
         UPDATE contributions
         SET
@@ -210,13 +202,11 @@ router.patch(
           cancelled_by=$3,
           cancelled_at=NOW()
         WHERE id=$1 AND status='PENDING'
-        RETURNING id
         `,
         [req.params.id, reason, req.user.id]
       );
 
-      if (!result.rowCount)
-        return res.status(404).json({ error: "Not found" });
+      if (!rowCount) return res.status(404).json({ error: "Not found" });
 
       await logAudit(
         "REJECT",
