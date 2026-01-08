@@ -58,37 +58,32 @@ pool
   .catch((err) => console.error("❌ DB Error:", err.message));
 
 /* =========================
-   🚏 ROUTES (FINAL & COMPLETE)
+   🚏 ROUTES (FINAL – NO /api)
 ========================= */
 
 /* AUTH */
 app.use("/auth", require("./routes/auth"));
 
-/* CORE MODULES */
+/* CORE */
 app.use("/members", require("./routes/members"));
 app.use("/funds", require("./routes/funds"));
 app.use("/treasurer", require("./routes/treasurer"));
 app.use("/reports", require("./routes/reports"));
 app.use("/receipts", require("./routes/receipts"));
 
-/* EXPENSES ✅ (MISSING – FIX) */
-app.use("/api/expenses", require("./routes/expenses"));
+/* EXPENSES */
+app.use("/expenses", require("./routes/expenses"));
 
-/* ADMIN MODULES ✅ */
-app.use("/api/admin", require("./routes/admin"));
+/* ADMIN */
+app.use("/admin", require("./routes/admin"));
+app.use("/dashboard", require("./routes/dashboard"));
 
-
-/* ADMIN / DASHBOARD */
-app.use("/api/dashboard", require("./routes/dashboard"));
-
-/* SUGGESTIONS ✅ (FIXED) */
-app.use("/api/suggestions", require("./routes/suggestions"));
-
-/* OTHER MODULES */
-app.use("/api/complaints", require("./routes/complaints"));
-app.use("/api/meetings", require("./routes/meetings"));
-app.use("/api/announcements", require("./routes/announcements"));
-app.use("/api/contributions", require("./routes/contributions"));
+/* FEATURES */
+app.use("/suggestions", require("./routes/suggestions")); // ✅ ADDED
+app.use("/complaints", require("./routes/complaints"));
+app.use("/meetings", require("./routes/meetings"));
+app.use("/announcements", require("./routes/announcements"));
+app.use("/contributions", require("./routes/contributions"));
 
 /* =========================
    🏠 ROOT
