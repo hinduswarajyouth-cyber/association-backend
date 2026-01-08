@@ -23,19 +23,8 @@ const ROLES = {
 /* =========================
    ROLE GROUPS
 ========================= */
+const ALL_USERS = Object.values(ROLES);
 
-// Anyone who can log in
-const ALL_USERS = [
-  ROLES.MEMBER,
-  ROLES.EC_MEMBER,
-  ROLES.VICE_PRESIDENT,
-  ROLES.GENERAL_SECRETARY,
-  ROLES.JOINT_SECRETARY,
-  ROLES.PRESIDENT,
-  ROLES.SUPER_ADMIN,
-];
-
-// Office bearers who work on complaints
 const OFFICE_ROLES = [
   ROLES.EC_MEMBER,
   ROLES.VICE_PRESIDENT,
@@ -43,13 +32,11 @@ const OFFICE_ROLES = [
   ROLES.JOINT_SECRETARY,
 ];
 
-// Final authority
 const PRESIDENT_ONLY = [
   ROLES.PRESIDENT,
   ROLES.SUPER_ADMIN,
 ];
 
-// Allowed complaint status flow
 const STATUS_FLOW = [
   "OPEN",
   "FORWARDED",
@@ -70,22 +57,29 @@ router.post(
       const { subject, description, priority = "NORMAL" } = req.body;
 
       if (!subject || !description) {
-        return res
-          .status(400)
-          .json({ error: "Subject and description required" });
+        return res.status(400).json({
+          error: "Subject and description required",
+        });
       }
 
       const { rows } = await pool.query(
         `
         INSERT INTO complaints
-        (member_id, subject, description, priority, status)
+          (member_id, subject, description, priority, status)
         VALUES ($1,$2,$3,$4,'OPEN')
         RETURNING id
         `,
         [req.user.id, subject, description, priority]
       );
 
-      await logAudit("CREATE", "COMPLAINT", rows[0].id, req.user.id);
+      await logAudit(
+        "CREATE",
+        "COMPLAINT",
+        rows[0].id,
+        req.user.id,
+        null,
+        req
+      );
 
       res.status(201).json({
         message: "Complaint submitted successfully",
@@ -103,6 +97,7 @@ router.post(
 router.get(
   "/my",
   verifyToken,
+  checkRole(...ALL_USERS),
   async (req, res) => {
     try {
       const { rows } = await pool.query(
@@ -150,7 +145,7 @@ router.get(
 );
 
 /* =====================================================
-   4️⃣ ASSIGN / FORWARD COMPLAINT (PRESIDENT ONLY)
+   4️⃣ ASSIGN / FORWARD (PRESIDENT ONLY)
 ===================================================== */
 router.put(
   "/assign/:id",
@@ -174,14 +169,21 @@ router.put(
           assigned_by=$2,
           status='FORWARDED',
           updated_at=NOW()
-        WHERE id=$3
+        WHERE id=$3 AND status='OPEN'
         `,
         [assigned_role, req.user.id, req.params.id]
       );
 
-      await logAudit("ASSIGN", "COMPLAINT", req.params.id, req.user.id);
+      await logAudit(
+        "ASSIGN",
+        "COMPLAINT",
+        req.params.id,
+        req.user.id,
+        { assigned_role },
+        req
+      );
 
-      res.json({ message: "Complaint assigned successfully" });
+      res.json({ message: "Complaint forwarded successfully" });
     } catch (err) {
       res.status(500).json({ error: "Assignment failed" });
     }
@@ -230,9 +232,9 @@ router.put(
       }
 
       if (status === "CLOSED") {
-        return res
-          .status(403)
-          .json({ error: "Only President can close complaints" });
+        return res.status(403).json({
+          error: "Only President can close complaints",
+        });
       }
 
       await pool.query(
@@ -244,9 +246,16 @@ router.put(
         [status, req.params.id]
       );
 
-      await logAudit("UPDATE_STATUS", "COMPLAINT", req.params.id, req.user.id);
+      await logAudit(
+        "UPDATE_STATUS",
+        "COMPLAINT",
+        req.params.id,
+        req.user.id,
+        { status },
+        req
+      );
 
-      res.json({ message: "Status updated" });
+      res.json({ message: "Status updated successfully" });
     } catch (err) {
       res.status(500).json({ error: "Update failed" });
     }
@@ -254,7 +263,7 @@ router.put(
 );
 
 /* =====================================================
-   7️⃣ OFFICE → ADD COMMENT
+   7️⃣ ADD COMMENT (OFFICE ROLES)
 ===================================================== */
 router.post(
   "/comment/:id",
@@ -271,23 +280,61 @@ router.post(
       await pool.query(
         `
         INSERT INTO complaint_comments
-        (complaint_id, comment, commented_by)
+          (complaint_id, comment, commented_by)
         VALUES ($1,$2,$3)
         `,
         [req.params.id, comment, req.user.id]
       );
 
-      await logAudit("COMMENT", "COMPLAINT", req.params.id, req.user.id);
+      await logAudit(
+        "COMMENT",
+        "COMPLAINT",
+        req.params.id,
+        req.user.id,
+        { comment },
+        req
+      );
 
       res.json({ message: "Comment added" });
     } catch (err) {
+      console.error("ADD COMMENT ERROR 👉", err.message);
       res.status(500).json({ error: "Failed to add comment" });
     }
   }
 );
 
 /* =====================================================
-   8️⃣ PRESIDENT → FINAL CLOSE COMPLAINT
+   7️⃣b VIEW COMMENTS (ALL USERS) ✅ FIXED
+===================================================== */
+router.get(
+  "/comment/:id",
+  verifyToken,
+  async (req, res) => {
+    try {
+      const { rows } = await pool.query(
+        `
+        SELECT
+          cc.comment,
+          cc.created_at,
+          u.name AS commented_by
+        FROM complaint_comments cc
+        JOIN users u ON u.id = cc.commented_by
+        WHERE cc.complaint_id=$1
+        ORDER BY cc.created_at ASC
+        `,
+        [req.params.id]
+      );
+
+      res.json(rows);
+    } catch (err) {
+      console.error("LOAD COMMENTS ERROR 👉", err.message);
+      res.status(500).json({ error: "Failed to load comments" });
+    }
+  }
+);
+
+/* =====================================================
+   8️⃣ PRESIDENT → CLOSE COMPLAINT
 ===================================================== */
 router.put(
   "/close/:id",
@@ -304,7 +351,14 @@ router.put(
         [req.user.id, req.params.id]
       );
 
-      await logAudit("CLOSE", "COMPLAINT", req.params.id, req.user.id);
+      await logAudit(
+        "CLOSE",
+        "COMPLAINT",
+        req.params.id,
+        req.user.id,
+        null,
+        req
+      );
 
       res.json({ message: "Complaint closed successfully" });
     } catch (err) {

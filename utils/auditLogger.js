@@ -1,42 +1,45 @@
 const pool = require("../db");
 
 /**
- * Logs audit actions
+ * =====================================================
+ * FINAL AUDIT LOGGER (DB MATCHED & STABLE)
+ * =====================================================
  *
- * @param {string} action              - Action performed (LOGIN, ADD_MEMBER, APPROVE_RECEIPT)
- * @param {string} entity              - Entity type (USER, RECEIPT, FUND, etc.)
- * @param {string|number|null} entityId - Entity identifier
- * @param {object|number|null} user     - User object {id} OR performed_by user ID
- * @param {object|null} metadata        - Optional extra data (JSON)
- * @param {object|null} req             - Express request (for IP & user-agent)
- * @param {string|null} ipOverride      - Optional manual IP address
+ * TABLE: audit_logs
+ * -----------------------------------------------------
+ * id            UUID
+ * action        TEXT
+ * entity        TEXT
+ * entity_id     INTEGER
+ * performed_by  VARCHAR
+ * user_id       UUID
+ * meta          JSONB
+ * created_at    TIMESTAMP
+ * -----------------------------------------------------
+ *
+ * @param {string} action        - CREATE | UPDATE | APPROVE | DELETE | LOGIN
+ * @param {string} entity        - USER | COMPLAINT | SUGGESTION | FUND | RECEIPT
+ * @param {number|null} entityId - Related record ID
+ * @param {object|null} user     - req.user { id, name }
+ * @param {object|null} meta     - Optional JSON data
  */
+
 module.exports = async function logAudit(
   action,
   entity,
   entityId = null,
   user = null,
-  metadata = null,
-  req = null,
-  ipOverride = null
+  meta = null
 ) {
   try {
     /* =========================
-       IP & USER AGENT
-    ========================= */
-    const ipAddress =
-      ipOverride ||
-      req?.headers?.["x-forwarded-for"]?.split(",")[0] ||
-      req?.socket?.remoteAddress ||
-      null;
-
-    const userAgent = req?.headers?.["user-agent"] || null;
-
-    /* =========================
-       PERFORMED BY
+       SAFE USER DATA
     ========================= */
     const performedBy =
-      typeof user === "object" ? user?.id || null : user || null;
+      typeof user === "object" && user?.name ? user.name : null;
+
+    const userId =
+      typeof user === "object" && user?.id ? user.id : null;
 
     /* =========================
        INSERT AUDIT LOG
@@ -44,18 +47,17 @@ module.exports = async function logAudit(
     await pool.query(
       `
       INSERT INTO audit_logs
-        (action, entity, entity_id, performed_by, ip_address, user_agent, metadata)
+        (action, entity, entity_id, performed_by, user_id, meta)
       VALUES
-        ($1, $2, $3, $4, $5, $6, $7)
+        ($1, $2, $3, $4, $5, $6)
       `,
       [
         action,
         entity,
         entityId,
         performedBy,
-        ipAddress,
-        userAgent,
-        metadata ? JSON.stringify(metadata) : null,
+        userId,
+        meta,
       ]
     );
   } catch (err) {
