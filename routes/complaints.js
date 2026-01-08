@@ -13,23 +13,43 @@ const router = express.Router();
 const ROLES = {
   SUPER_ADMIN: "SUPER_ADMIN",
   PRESIDENT: "PRESIDENT",
+  VICE_PRESIDENT: "VICE_PRESIDENT",
   GENERAL_SECRETARY: "GENERAL_SECRETARY",
   JOINT_SECRETARY: "JOINT_SECRETARY",
   EC_MEMBER: "EC_MEMBER",
   MEMBER: "MEMBER",
 };
 
-const ADMIN_ROLES = [
-  ROLES.SUPER_ADMIN,
-  ROLES.PRESIDENT,
-];
+/* =========================
+   ROLE GROUPS
+========================= */
 
-const OFFICE_ROLES = [
+// Anyone who can log in
+const ALL_USERS = [
+  ROLES.MEMBER,
+  ROLES.EC_MEMBER,
+  ROLES.VICE_PRESIDENT,
   ROLES.GENERAL_SECRETARY,
   ROLES.JOINT_SECRETARY,
-  ROLES.EC_MEMBER,
+  ROLES.PRESIDENT,
+  ROLES.SUPER_ADMIN,
 ];
 
+// Office bearers who work on complaints
+const OFFICE_ROLES = [
+  ROLES.EC_MEMBER,
+  ROLES.VICE_PRESIDENT,
+  ROLES.GENERAL_SECRETARY,
+  ROLES.JOINT_SECRETARY,
+];
+
+// Final authority
+const PRESIDENT_ONLY = [
+  ROLES.PRESIDENT,
+  ROLES.SUPER_ADMIN,
+];
+
+// Allowed complaint status flow
 const STATUS_FLOW = [
   "OPEN",
   "FORWARDED",
@@ -39,12 +59,12 @@ const STATUS_FLOW = [
 ];
 
 /* =====================================================
-   1️⃣ MEMBER → CREATE COMPLAINT
+   1️⃣ CREATE COMPLAINT (ALL USERS)
 ===================================================== */
 router.post(
   "/create",
   verifyToken,
-  checkRole(ROLES.MEMBER),
+  checkRole(...ALL_USERS),
   async (req, res) => {
     try {
       const { subject, description, priority = "NORMAL" } = req.body;
@@ -52,7 +72,7 @@ router.post(
       if (!subject || !description) {
         return res
           .status(400)
-          .json({ error: "Subject & description required" });
+          .json({ error: "Subject and description required" });
       }
 
       const { rows } = await pool.query(
@@ -65,12 +85,7 @@ router.post(
         [req.user.id, subject, description, priority]
       );
 
-      await logAudit(
-        "CREATE",
-        "COMPLAINT",
-        rows[0].id,
-        req.user.id
-      );
+      await logAudit("CREATE", "COMPLAINT", rows[0].id, req.user.id);
 
       res.status(201).json({
         message: "Complaint submitted successfully",
@@ -83,12 +98,11 @@ router.post(
 );
 
 /* =====================================================
-   2️⃣ MEMBER → VIEW OWN COMPLAINTS
+   2️⃣ VIEW OWN COMPLAINTS (ALL USERS)
 ===================================================== */
 router.get(
   "/my",
   verifyToken,
-  checkRole(ROLES.MEMBER),
   async (req, res) => {
     try {
       const { rows } = await pool.query(
@@ -109,12 +123,12 @@ router.get(
 );
 
 /* =====================================================
-   3️⃣ ADMIN → VIEW ALL COMPLAINTS
+   3️⃣ VIEW ALL COMPLAINTS (PRESIDENT ONLY)
 ===================================================== */
 router.get(
   "/all",
   verifyToken,
-  checkRole(...ADMIN_ROLES),
+  checkRole(...PRESIDENT_ONLY),
   async (req, res) => {
     try {
       const { rows } = await pool.query(
@@ -136,20 +150,20 @@ router.get(
 );
 
 /* =====================================================
-   4️⃣ ADMIN → ASSIGN / FORWARD
+   4️⃣ ASSIGN / FORWARD COMPLAINT (PRESIDENT ONLY)
 ===================================================== */
 router.put(
   "/assign/:id",
   verifyToken,
-  checkRole(...ADMIN_ROLES),
+  checkRole(...PRESIDENT_ONLY),
   async (req, res) => {
     try {
       const { assigned_role } = req.body;
 
       if (!OFFICE_ROLES.includes(assigned_role)) {
-        return res
-          .status(400)
-          .json({ error: "Invalid assigned role" });
+        return res.status(400).json({
+          error: "Invalid role for assignment",
+        });
       }
 
       await pool.query(
@@ -165,22 +179,17 @@ router.put(
         [assigned_role, req.user.id, req.params.id]
       );
 
-      await logAudit(
-        "ASSIGN",
-        "COMPLAINT",
-        req.params.id,
-        req.user.id
-      );
+      await logAudit("ASSIGN", "COMPLAINT", req.params.id, req.user.id);
 
-      res.json({ message: "Complaint forwarded successfully" });
+      res.json({ message: "Complaint assigned successfully" });
     } catch (err) {
-      res.status(500).json({ error: "Assign failed" });
+      res.status(500).json({ error: "Assignment failed" });
     }
   }
 );
 
 /* =====================================================
-   5️⃣ OFFICE → VIEW ASSIGNED
+   5️⃣ OFFICE → VIEW ASSIGNED COMPLAINTS
 ===================================================== */
 router.get(
   "/assigned",
@@ -220,6 +229,12 @@ router.put(
         return res.status(400).json({ error: "Invalid status" });
       }
 
+      if (status === "CLOSED") {
+        return res
+          .status(403)
+          .json({ error: "Only President can close complaints" });
+      }
+
       await pool.query(
         `
         UPDATE complaints
@@ -229,12 +244,7 @@ router.put(
         [status, req.params.id]
       );
 
-      await logAudit(
-        "UPDATE",
-        "COMPLAINT",
-        req.params.id,
-        req.user.id
-      );
+      await logAudit("UPDATE_STATUS", "COMPLAINT", req.params.id, req.user.id);
 
       res.json({ message: "Status updated" });
     } catch (err) {
@@ -244,12 +254,72 @@ router.put(
 );
 
 /* =====================================================
-   7️⃣ ADMIN → DASHBOARD STATS
+   7️⃣ OFFICE → ADD COMMENT
+===================================================== */
+router.post(
+  "/comment/:id",
+  verifyToken,
+  checkRole(...OFFICE_ROLES),
+  async (req, res) => {
+    try {
+      const { comment } = req.body;
+
+      if (!comment) {
+        return res.status(400).json({ error: "Comment required" });
+      }
+
+      await pool.query(
+        `
+        INSERT INTO complaint_comments
+        (complaint_id, comment, commented_by)
+        VALUES ($1,$2,$3)
+        `,
+        [req.params.id, comment, req.user.id]
+      );
+
+      await logAudit("COMMENT", "COMPLAINT", req.params.id, req.user.id);
+
+      res.json({ message: "Comment added" });
+    } catch (err) {
+      res.status(500).json({ error: "Failed to add comment" });
+    }
+  }
+);
+
+/* =====================================================
+   8️⃣ PRESIDENT → FINAL CLOSE COMPLAINT
+===================================================== */
+router.put(
+  "/close/:id",
+  verifyToken,
+  checkRole(...PRESIDENT_ONLY),
+  async (req, res) => {
+    try {
+      await pool.query(
+        `
+        UPDATE complaints
+        SET status='CLOSED', closed_by=$1, updated_at=NOW()
+        WHERE id=$2
+        `,
+        [req.user.id, req.params.id]
+      );
+
+      await logAudit("CLOSE", "COMPLAINT", req.params.id, req.user.id);
+
+      res.json({ message: "Complaint closed successfully" });
+    } catch (err) {
+      res.status(500).json({ error: "Close failed" });
+    }
+  }
+);
+
+/* =====================================================
+   9️⃣ PRESIDENT → DASHBOARD STATS
 ===================================================== */
 router.get(
   "/stats",
   verifyToken,
-  checkRole(...ADMIN_ROLES),
+  checkRole(...PRESIDENT_ONLY),
   async (req, res) => {
     const { rows } = await pool.query(`
       SELECT
