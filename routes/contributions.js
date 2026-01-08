@@ -1,248 +1,152 @@
-import { useEffect, useState } from "react";
-import api from "../api/api";
-import Navbar from "../components/Navbar";
+const express = require("express");
+const router = express.Router();
+const pool = require("../db");
 
-/* =========================
-   CONFIG
-========================= */
-const UPI_ID = "hinduswarajyouth@ybl";
-const PAYEE_NAME = "Hindu Swarajya Youth";
+const verifyToken = require("../middleware/verifyToken");
+const checkRole = require("../middleware/checkRole");
 
-/* =========================
-   ROLE FROM TOKEN
-========================= */
-const getRole = () => {
-  try {
-    const token = localStorage.getItem("token");
-    return JSON.parse(atob(token.split(".")[1])).role;
-  } catch {
-    return null;
-  }
-};
-
-const ROLE = getRole();
+/* =====================================================
+   ROLES
+===================================================== */
 const FINANCE_ROLES = ["TREASURER", "SUPER_ADMIN", "PRESIDENT"];
 
-export default function Contribution() {
-  const [funds, setFunds] = useState([]);
-  const [myList, setMyList] = useState([]);
-  const [pending, setPending] = useState([]);
-  const [approved, setApproved] = useState([]);
+/* =====================================================
+   1️⃣ CREATE CONTRIBUTION (ALL LOGGED-IN USERS)
+   POST /contributions/submit
+===================================================== */
+router.post("/submit", verifyToken, async (req, res) => {
+  try {
+    const { fund_id, amount, payment_mode, reference_no } = req.body;
 
-  const [fundId, setFundId] = useState("");
-  const [amount, setAmount] = useState("");
-  const [mode, setMode] = useState("CASH");
-  const [ref, setRef] = useState("");
-  const [note, setNote] = useState("");
-  const [loading, setLoading] = useState(false);
-
-  /* =========================
-     LOAD DATA
-  ========================= */
-  useEffect(() => {
-    loadFunds();
-    loadMyContributions();
-    if (FINANCE_ROLES.includes(ROLE)) {
-      loadPending();
-      loadApproved();
-    }
-    // eslint-disable-next-line
-  }, []);
-
-  const loadFunds = async () => {
-    const res = await api.get("/funds/list");
-    setFunds(res.data.funds || []);
-  };
-
-  const loadMyContributions = async () => {
-    const res = await api.get("/funds/my-contributions");
-    setMyList(res.data || []);
-  };
-
-  const loadPending = async () => {
-    const res = await api.get("/treasurer/pending");
-    setPending(res.data.pending || []);
-  };
-
-  const loadApproved = async () => {
-    const res = await api.get("/treasurer/approved");
-    setApproved(res.data.approved || []);
-  };
-
-  /* =========================
-     SUBMIT
-  ========================= */
-  const submit = async () => {
-    if (!fundId || !amount) {
-      alert("Select fund & amount");
-      return;
-    }
-    if (mode !== "CASH" && !ref) {
-      alert("Reference number required");
-      return;
+    if (!fund_id || !amount || amount <= 0 || !payment_mode) {
+      return res.status(400).json({ error: "Missing / invalid fields" });
     }
 
-    setLoading(true);
-    try {
-      await api.post("/funds/contribute", {
-        fund_id: fundId,
+    await pool.query(
+      `
+      INSERT INTO contributions
+        (fund_id, member_id, amount, payment_mode, reference_no, status)
+      VALUES
+        ($1, $2, $3, $4, $5, 'PENDING')
+      `,
+      [
+        fund_id,
+        req.user.id,
         amount,
-        payment_mode: mode,
-        reference_no: mode === "CASH" ? null : ref,
-        note,
-      });
+        payment_mode,
+        reference_no || null,
+      ]
+    );
 
-      alert("✅ Contribution submitted (Pending approval)");
-      setAmount("");
-      setRef("");
-      setNote("");
-      loadMyContributions();
-      if (FINANCE_ROLES.includes(ROLE)) loadPending();
+    res.status(201).json({ message: "Contribution submitted (Pending approval)" });
+  } catch (err) {
+    console.error("SUBMIT CONTRIBUTION ERROR 👉", err.message);
+    res.status(500).json({ error: "Contribution failed" });
+  }
+});
+
+/* =====================================================
+   2️⃣ MY CONTRIBUTIONS (ALL USERS)
+   GET /contributions/my
+===================================================== */
+router.get("/my", verifyToken, async (req, res) => {
+  try {
+    const { rows } = await pool.query(
+      `
+      SELECT
+        c.id,
+        f.fund_name,
+        c.amount,
+        c.payment_mode,
+        c.reference_no,
+        c.status,
+        c.created_at,
+        c.receipt_no,
+        c.receipt_date
+      FROM contributions c
+      JOIN funds f ON f.id = c.fund_id
+      WHERE c.member_id = $1
+      ORDER BY c.created_at DESC
+      `,
+      [req.user.id]
+    );
+
+    res.json(rows);
+  } catch (err) {
+    console.error("MY CONTRIBUTIONS ERROR 👉", err.message);
+    res.status(500).json({ error: "Failed to load contributions" });
+  }
+});
+
+/* =====================================================
+   3️⃣ ALL CONTRIBUTIONS (TREASURER / ADMIN)
+   GET /contributions/all
+===================================================== */
+router.get(
+  "/all",
+  verifyToken,
+  checkRole(...FINANCE_ROLES),
+  async (req, res) => {
+    try {
+      const { rows } = await pool.query(
+        `
+        SELECT
+          c.id,
+          u.name AS member_name,
+          f.fund_name,
+          c.amount,
+          c.payment_mode,
+          c.reference_no,
+          c.status,
+          c.created_at,
+          c.receipt_no
+        FROM contributions c
+        JOIN users u ON u.id = c.member_id
+        JOIN funds f ON f.id = c.fund_id
+        ORDER BY c.created_at DESC
+        `
+      );
+
+      res.json(rows);
     } catch (err) {
-      alert(err.response?.data?.error || "Failed");
-    } finally {
-      setLoading(false);
+      console.error("ALL CONTRIBUTIONS ERROR 👉", err.message);
+      res.status(500).json({ error: "Failed to load contributions" });
     }
-  };
+  }
+);
 
-  /* =========================
-     APPROVE / REJECT
-  ========================= */
-  const approve = async (id) => {
-    await api.patch(`/treasurer/approve/${id}`);
-    loadPending();
-    loadApproved();
-  };
+/* =====================================================
+   4️⃣ DASHBOARD SUMMARY (ROLE BASED)
+   GET /contributions/dashboard
+===================================================== */
+router.get("/dashboard", verifyToken, async (req, res) => {
+  try {
+    let query, params = [];
 
-  const reject = async (id) => {
-    const reason = prompt("Reject reason?");
-    if (!reason) return;
-    await api.patch(`/treasurer/reject/${id}`, { reason });
-    loadPending();
-  };
+    if (FINANCE_ROLES.includes(req.user.role)) {
+      query = `
+        SELECT
+          COUNT(*)::int AS total_count,
+          COALESCE(SUM(amount),0) AS total_amount
+        FROM contributions
+        WHERE status='APPROVED'
+      `;
+    } else {
+      query = `
+        SELECT
+          COUNT(*)::int AS total_count,
+          COALESCE(SUM(amount),0) AS total_amount
+        FROM contributions
+        WHERE member_id=$1 AND status='APPROVED'
+      `;
+      params = [req.user.id];
+    }
 
-  /* =========================
-     UPI
-  ========================= */
-  const upiUrl =
-    amount &&
-    `upi://pay?pa=${UPI_ID}&pn=${encodeURIComponent(
-      PAYEE_NAME
-    )}&am=${amount}&cu=INR`;
+    const { rows } = await pool.query(query, params);
+    res.json(rows[0]);
+  } catch (err) {
+    res.status(500).json({ error: "Dashboard load failed" });
+  }
+});
 
-  const qr =
-    amount &&
-    `https://api.qrserver.com/v1/create-qr-code/?size=220x220&data=${encodeURIComponent(
-      upiUrl
-    )}`;
-
-  return (
-    <>
-      <Navbar />
-      <div style={page}>
-        <h2>💰 Contributions</h2>
-
-        {/* ================= CREATE ================= */}
-        <div style={card}>
-          <h3>New Contribution</h3>
-
-          <select value={fundId} onChange={(e) => setFundId(e.target.value)}>
-            <option value="">Select Fund</option>
-            {funds.map((f) => (
-              <option key={f.id} value={f.id}>
-                {f.fund_name}
-              </option>
-            ))}
-          </select>
-
-          <input
-            placeholder="Amount"
-            value={amount}
-            onChange={(e) => setAmount(e.target.value)}
-          />
-
-          <select value={mode} onChange={(e) => setMode(e.target.value)}>
-            <option value="CASH">Cash</option>
-            <option value="UPI">UPI</option>
-            <option value="BANK">Bank</option>
-          </select>
-
-          {mode === "UPI" && (
-            <>
-              <a href={upiUrl}>📲 Pay Now via UPI</a>
-              {qr && <img src={qr} alt="UPI QR" />}
-            </>
-          )}
-
-          {mode !== "CASH" && (
-            <input
-              placeholder="Reference No"
-              value={ref}
-              onChange={(e) => setRef(e.target.value)}
-            />
-          )}
-
-          <textarea
-            placeholder="Note (optional)"
-            value={note}
-            onChange={(e) => setNote(e.target.value)}
-          />
-
-          <button onClick={submit} disabled={loading}>
-            {loading ? "Submitting..." : "Submit"}
-          </button>
-        </div>
-
-        {/* ================= MY LIST ================= */}
-        <h3>📜 My Contributions</h3>
-        {myList.length === 0 && <p>No contributions</p>}
-        {myList.map((c) => (
-          <div key={c.id} style={row}>
-            {c.fund_name} – ₹{c.amount} – {c.status}
-          </div>
-        ))}
-
-        {/* ================= TREASURER ================= */}
-        {FINANCE_ROLES.includes(ROLE) && (
-          <>
-            <h3>⏳ Pending Approval</h3>
-            {pending.map((p) => (
-              <div key={p.id} style={row}>
-                {p.member_name} – {p.fund_name} – ₹{p.amount}
-                <button onClick={() => approve(p.id)}>Approve</button>
-                <button onClick={() => reject(p.id)}>Reject</button>
-              </div>
-            ))}
-
-            <h3>✅ Approved</h3>
-            {approved.map((a) => (
-              <div key={a.id} style={row}>
-                {a.member_name} – {a.fund_name} – ₹{a.amount}
-              </div>
-            ))}
-          </>
-        )}
-      </div>
-    </>
-  );
-}
-
-/* =========================
-   STYLES
-========================= */
-const page = { padding: 30, maxWidth: 900 };
-const card = {
-  background: "#fff",
-  padding: 16,
-  borderRadius: 10,
-  marginBottom: 20,
-  display: "flex",
-  flexDirection: "column",
-  gap: 10,
-};
-const row = {
-  background: "#f8fafc",
-  padding: 10,
-  borderRadius: 6,
-  marginBottom: 6,
-};
+module.exports = router;
