@@ -68,7 +68,7 @@ router.get(
 );
 
 /* =====================================================
-   ✅ APPROVE CONTRIBUTION (LEDGER SAFE)
+   ✅ APPROVE CONTRIBUTION (100% SAFE)
    PATCH /treasurer/approve/:id
 ===================================================== */
 router.patch(
@@ -83,21 +83,25 @@ router.patch(
 
       await client.query("BEGIN");
 
+      /* 1️⃣ Lock contribution */
       const { rows, rowCount } = await client.query(
         `SELECT * FROM contributions WHERE id=$1 FOR UPDATE`,
         [contributionId]
       );
 
       if (!rowCount) throw new Error("Contribution not found");
+
       const c = rows[0];
 
-      if (c.status !== "PENDING") throw new Error("Already processed");
+      if (c.status !== "PENDING")
+        throw new Error("Already processed");
 
+      /* 2️⃣ Financial year check */
       const year = new Date(c.created_at).getFullYear();
       if (await isYearClosed(year))
         throw new Error("Financial year closed");
 
-      /* ===== Receipt Number ===== */
+      /* 3️⃣ Receipt number */
       const seq = await client.query(
         `
         INSERT INTO receipt_sequence (year, last_number)
@@ -113,10 +117,10 @@ router.patch(
         seq.rows[0].last_number
       ).padStart(6, "0")}`;
 
-      /* ===== Ledger Balance (SAFE) ===== */
-      const bal = await client.query(
+      /* 4️⃣ Ledger balance (SAFE – NO UNDEFINED) */
+      const balRes = await client.query(
         `
-        SELECT COALESCE(balance_after,0) AS balance
+        SELECT balance_after
         FROM ledger
         WHERE fund_id=$1
         ORDER BY id DESC
@@ -125,10 +129,14 @@ router.patch(
         [c.fund_id]
       );
 
-      const newBalance =
-        Number(bal.rows[0].balance) + Number(c.amount);
+      const previousBalance =
+        balRes.rows.length > 0
+          ? Number(balRes.rows[0].balance_after)
+          : 0;
 
-      /* ===== Update Contribution ===== */
+      const newBalance = previousBalance + Number(c.amount);
+
+      /* 5️⃣ Update contribution */
       await client.query(
         `
         UPDATE contributions
@@ -143,7 +151,7 @@ router.patch(
         [approvedBy, receiptNo, contributionId]
       );
 
-      /* ===== Ledger Entry ===== */
+      /* 6️⃣ Ledger entry */
       await client.query(
         `
         INSERT INTO ledger
@@ -170,9 +178,13 @@ router.patch(
 
       await client.query("COMMIT");
 
-      res.json({ message: "Approved", receipt_no: receiptNo });
+      res.json({
+        message: "Contribution approved",
+        receipt_no: receiptNo,
+      });
     } catch (err) {
       await client.query("ROLLBACK");
+      console.error("APPROVE ERROR 👉", err.message);
       res.status(400).json({ error: err.message });
     } finally {
       client.release();
@@ -191,7 +203,8 @@ router.patch(
   async (req, res) => {
     try {
       const { reason } = req.body;
-      if (!reason) return res.status(400).json({ error: "Reason required" });
+      if (!reason)
+        return res.status(400).json({ error: "Reason required" });
 
       const { rowCount } = await pool.query(
         `
@@ -206,7 +219,8 @@ router.patch(
         [req.params.id, reason, req.user.id]
       );
 
-      if (!rowCount) return res.status(404).json({ error: "Not found" });
+      if (!rowCount)
+        return res.status(404).json({ error: "Not found" });
 
       await logAudit(
         "REJECT",
@@ -218,6 +232,7 @@ router.patch(
 
       res.json({ message: "Rejected" });
     } catch (err) {
+      console.error("REJECT ERROR 👉", err.message);
       res.status(500).json({ error: "Server error" });
     }
   }
