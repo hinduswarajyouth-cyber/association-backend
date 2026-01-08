@@ -67,7 +67,6 @@ router.get("/my", verifyToken, async (req, res) => {
 
     res.json(rows);
   } catch (err) {
-    console.error("MY CONTRIBUTIONS ERROR 👉", err.message);
     res.status(500).json({ error: "Failed to load contributions" });
   }
 });
@@ -100,14 +99,42 @@ router.get(
 
       res.json(rows);
     } catch (err) {
-      console.error("ALL CONTRIBUTIONS ERROR 👉", err.message);
       res.status(500).json({ error: "Failed to load contributions" });
     }
   }
 );
 
 /* =====================================================
-   4️⃣ TREASURER / ADMIN → APPROVE
+   4️⃣ DASHBOARD SUMMARY (ALL ROLES)
+===================================================== */
+router.get("/dashboard", verifyToken, async (req, res) => {
+  let query, params = [];
+
+  if (FINANCE_ROLES.includes(req.user.role)) {
+    query = `
+      SELECT
+        COUNT(*) AS total_count,
+        COALESCE(SUM(amount),0) AS total_amount
+      FROM contributions
+      WHERE payment_status='APPROVED'
+    `;
+  } else {
+    query = `
+      SELECT
+        COUNT(*) AS total_count,
+        COALESCE(SUM(amount),0) AS total_amount
+      FROM contributions
+      WHERE member_id=$1 AND payment_status='APPROVED'
+    `;
+    params = [req.user.id];
+  }
+
+  const { rows } = await pool.query(query, params);
+  res.json(rows[0]);
+});
+
+/* =====================================================
+   5️⃣ TREASURER / ADMIN → APPROVE
 ===================================================== */
 router.put(
   "/approve/:id",
@@ -116,17 +143,11 @@ router.put(
   async (req, res) => {
     try {
       await pool.query(
-        `
-        UPDATE contributions
-        SET payment_status='APPROVED'
-        WHERE id=$1
-        `,
+        `UPDATE contributions SET payment_status='APPROVED' WHERE id=$1`,
         [req.params.id]
       );
-
       res.json({ message: "Contribution approved" });
     } catch (err) {
-      console.error("APPROVE ERROR 👉", err.message);
       res.status(500).json({ error: "Approval failed" });
     }
   }
