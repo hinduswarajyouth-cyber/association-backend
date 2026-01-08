@@ -10,11 +10,12 @@ const isYearClosed = require("../utils/isYearClosed");
 /* =====================================================
    ➕ CREATE EXPENSE (REQUEST)
    POST /expenses
+   ✔ SUPER_ADMIN / PRESIDENT / TREASURER
 ===================================================== */
 router.post(
   "/",
   verifyToken,
-  checkRole("SUPER_ADMIN", "PRESIDENT"),
+  checkRole("SUPER_ADMIN", "PRESIDENT", "TREASURER"),
   async (req, res) => {
     try {
       const {
@@ -70,8 +71,7 @@ router.post(
         "CREATE",
         "EXPENSE",
         result.rows[0].id,
-        req.user.id,
-        { amount, fund_id }
+        req.user.id
       );
 
       res.status(201).json({
@@ -88,11 +88,12 @@ router.post(
 /* =====================================================
    📋 GET ALL EXPENSES
    GET /expenses
+   ✔ SUPER_ADMIN / PRESIDENT / TREASURER
 ===================================================== */
 router.get(
   "/",
   verifyToken,
-  checkRole("SUPER_ADMIN", "PRESIDENT"),
+  checkRole("SUPER_ADMIN", "PRESIDENT", "TREASURER"),
   async (req, res) => {
     try {
       const result = await pool.query(`
@@ -115,6 +116,7 @@ router.get(
 /* =====================================================
    ✅ APPROVE EXPENSE (LEDGER DEBIT)
    PUT /expenses/:id/approve
+   ✔ SUPER_ADMIN ONLY
 ===================================================== */
 router.put(
   "/:id/approve",
@@ -129,14 +131,8 @@ router.put(
 
       await client.query("BEGIN");
 
-      /* 🔒 Lock expense */
       const expRes = await client.query(
-        `
-        SELECT *
-        FROM expenses
-        WHERE id = $1
-        FOR UPDATE
-        `,
+        `SELECT * FROM expenses WHERE id=$1 FOR UPDATE`,
         [expenseId]
       );
 
@@ -153,40 +149,37 @@ router.put(
         throw new Error("Financial year closed");
       }
 
-      /* 💰 Get current balance from ledger */
       const balRes = await client.query(
         `
-        SELECT COALESCE(balance_after, 0) AS balance
+        SELECT COALESCE(balance_after,0) AS balance
         FROM ledger
-        WHERE fund_id = $1
+        WHERE fund_id=$1
         ORDER BY id DESC
         LIMIT 1
         `,
         [expense.fund_id]
       );
 
-      const previousBalance = balRes.rows[0].balance;
+      const currentBalance = Number(balRes.rows[0].balance);
 
-      if (previousBalance < expense.amount) {
+      if (currentBalance < expense.amount) {
         throw new Error("Insufficient fund balance");
       }
 
-      const newBalance = previousBalance - Number(expense.amount);
+      const newBalance = currentBalance - Number(expense.amount);
 
-      /* ✅ Approve expense */
       await client.query(
         `
         UPDATE expenses
         SET
-          status = 'APPROVED',
-          approved_by = $1,
-          approved_at = NOW()
-        WHERE id = $2
+          status='APPROVED',
+          approved_by=$1,
+          approved_at=NOW()
+        WHERE id=$2
         `,
         [approvedBy, expenseId]
       );
 
-      /* 📘 Ledger DEBIT entry */
       await client.query(
         `
         INSERT INTO ledger
@@ -215,8 +208,7 @@ router.put(
         "APPROVE",
         "EXPENSE",
         expenseId,
-        approvedBy,
-        { amount: expense.amount }
+        approvedBy
       );
 
       await client.query("COMMIT");
@@ -238,6 +230,7 @@ router.put(
 /* =====================================================
    🔁 CANCEL APPROVED EXPENSE (REVERSAL)
    PUT /expenses/:id/cancel
+   ✔ SUPER_ADMIN ONLY
 ===================================================== */
 router.put(
   "/:id/cancel",
@@ -257,12 +250,7 @@ router.put(
       await client.query("BEGIN");
 
       const expRes = await client.query(
-        `
-        SELECT *
-        FROM expenses
-        WHERE id = $1
-        FOR UPDATE
-        `,
+        `SELECT * FROM expenses WHERE id=$1 FOR UPDATE`,
         [expenseId]
       );
 
@@ -283,35 +271,29 @@ router.put(
         `
         SELECT balance_after
         FROM ledger
-        WHERE fund_id = $1
+        WHERE fund_id=$1
         ORDER BY id DESC
         LIMIT 1
         `,
         [expense.fund_id]
       );
 
-      if (!balRes.rowCount) {
-        throw new Error("Ledger entry missing");
-      }
-
       const newBalance =
         Number(balRes.rows[0].balance_after) + Number(expense.amount);
 
-      /* ❌ Cancel expense */
       await client.query(
         `
         UPDATE expenses
         SET
-          status = 'CANCELLED',
-          cancelled_by = $1,
-          cancelled_at = NOW(),
-          cancel_reason = $2
-        WHERE id = $3
+          status='CANCELLED',
+          cancelled_by=$1,
+          cancelled_at=NOW(),
+          cancel_reason=$2
+        WHERE id=$3
         `,
         [req.user.id, reason, expenseId]
       );
 
-      /* 📘 Ledger CREDIT reversal */
       await client.query(
         `
         INSERT INTO ledger
@@ -340,8 +322,7 @@ router.put(
         "CANCEL",
         "EXPENSE",
         expenseId,
-        req.user.id,
-        { reason }
+        req.user.id
       );
 
       await client.query("COMMIT");
