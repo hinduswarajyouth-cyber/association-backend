@@ -342,7 +342,39 @@ router.delete(
     }
   }
 );
+/* =====================================================
+   📜 GET AUDIT LOGS
+   GET /api/admin/audit-logs
+   ✔ SUPER_ADMIN ONLY
+===================================================== */
+router.get(
+  "/audit-logs",
+  verifyToken,
+  checkRole("SUPER_ADMIN"),
+  async (req, res) => {
+    try {
+      const result = await pool.query(`
+        SELECT
+          id,
+          action,
+          entity,
+          entity_id,
+          performed_by,
+          user_id,
+          metadata,
+          created_at
+        FROM audit_logs
+        ORDER BY created_at DESC
+        LIMIT 100
+      `);
 
+      res.json(result.rows);
+    } catch (err) {
+      console.error("AUDIT LOGS ERROR 👉", err.message);
+      res.status(500).json({ error: "Failed to load audit logs" });
+    }
+  }
+);
 
 
 module.exports = router;

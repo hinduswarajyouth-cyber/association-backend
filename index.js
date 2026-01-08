@@ -74,6 +74,9 @@ app.use("/receipts", require("./routes/receipts"));
 /* EXPENSES ✅ (MISSING – FIX) */
 app.use("/api/expenses", require("./routes/expenses"));
 
+/* ADMIN MODULES ✅ */
+app.use("/api/admin", require("./routes/admin"));
+
 
 /* ADMIN / DASHBOARD */
 app.use("/api/dashboard", require("./routes/dashboard"));
