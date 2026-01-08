@@ -71,6 +71,8 @@ app.use("/treasurer", require("./routes/treasurer"));
 app.use("/reports", require("./routes/reports"));
 app.use("/receipts", require("./routes/receipts"));
 
+
+
 /* ADMIN / DASHBOARD */
 app.use("/api/dashboard", require("./routes/dashboard"));
 
@@ -81,6 +83,7 @@ app.use("/api/suggestions", require("./routes/suggestions"));
 app.use("/api/complaints", require("./routes/complaints"));
 app.use("/api/meetings", require("./routes/meetings"));
 app.use("/api/announcements", require("./routes/announcements"));
+app.use("/api/contributions", require("./routes/contributions"));
 
 /* =========================
    🏠 ROOT
