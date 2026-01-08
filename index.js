@@ -71,6 +71,8 @@ app.use("/treasurer", require("./routes/treasurer"));
 app.use("/reports", require("./routes/reports"));
 app.use("/receipts", require("./routes/receipts"));
 
+/* EXPENSES ✅ (MISSING – FIX) */
+app.use("/api/expenses", require("./routes/expenses"));
 
 
 /* ADMIN / DASHBOARD */
