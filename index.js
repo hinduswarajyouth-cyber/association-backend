@@ -15,37 +15,6 @@ const app = express();
 app.set("trust proxy", 1);
 
 /* =========================
-   🌐 FORCE CORS HEADERS (CRITICAL FIX)
-   (Ensures chat/files/resolution work)
-========================= */
-app.use((req, res, next) => {
-  const origin = req.headers.origin;
-
-  if (
-    origin === "https://hinduswarajyouth.online" ||
-    origin === "https://www.hinduswarajyouth.online"
-  ) {
-    res.setHeader("Access-Control-Allow-Origin", origin);
-    res.setHeader("Access-Control-Allow-Credentials", "true");
-  }
-
-  res.setHeader(
-    "Access-Control-Allow-Methods",
-    "GET,POST,PUT,PATCH,DELETE,OPTIONS"
-  );
-  res.setHeader(
-    "Access-Control-Allow-Headers",
-    "Content-Type, Authorization"
-  );
-
-  if (req.method === "OPTIONS") {
-    return res.sendStatus(200);
-  }
-
-  next();
-});
-
-/* =========================
    🔐 SECURITY
 ========================= */
 app.use(
@@ -55,7 +24,7 @@ app.use(
 );
 
 /* =========================
-   🌐 CORS (KEEPED)
+   🌐 CORS (FINAL & SAFE)
 ========================= */
 const allowedOrigins = [
   "https://hinduswarajyouth.online",
@@ -65,7 +34,8 @@ const allowedOrigins = [
 
 app.use(
   cors({
-    origin: function (origin, callback) {
+    origin: (origin, callback) => {
+      // Allow server-to-server / Postman
       if (!origin) return callback(null, true);
 
       if (allowedOrigins.includes(origin)) {
@@ -74,18 +44,19 @@ app.use(
         callback(new Error("CORS not allowed"));
       }
     },
+    credentials: true,
     methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
     allowedHeaders: ["Content-Type", "Authorization"],
-    credentials: true,
   })
 );
 
+// Preflight
 app.options("*", cors());
 
 /* =========================
    📦 BODY PARSERS
 ========================= */
-app.use(express.json());
+app.use(express.json({ limit: "10mb" }));
 app.use(express.urlencoded({ extended: true }));
 
 /* =========================
@@ -95,6 +66,8 @@ app.use(
   rateLimit({
     windowMs: 15 * 60 * 1000,
     max: 200,
+    standardHeaders: true,
+    legacyHeaders: false,
   })
 );
 
@@ -124,6 +97,7 @@ app.use("/funds", require("./routes/funds"));
 app.use("/treasurer", require("./routes/treasurer"));
 app.use("/reports", require("./routes/reports"));
 app.use("/receipts", require("./routes/receipts"));
+app.use("/notifications", require("./routes/notifications"));
 
 /* ASSOCIATION */
 app.use("/association", require("./routes/association"));
