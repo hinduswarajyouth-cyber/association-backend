@@ -8,7 +8,10 @@ const path = require("path");
 
 const pool = require("./db");
 const app = express();
-// ✅ TRUST PROXY (FIXES X-Forwarded-For ERROR)
+
+/* =========================
+   ✅ TRUST PROXY
+========================= */
 app.set("trust proxy", 1);
 
 /* =========================
@@ -21,7 +24,7 @@ app.use(
 );
 
 /* =========================
-   🌐 CORS (🔥 FIXED)
+   🌐 CORS
 ========================= */
 const allowedOrigins = [
   "https://hinduswarajyouth.online",
@@ -31,7 +34,7 @@ const allowedOrigins = [
 app.use(
   cors({
     origin: function (origin, callback) {
-      // allow requests with no origin (postman, curl)
+      // allow requests without origin (Postman, curl)
       if (!origin) return callback(null, true);
 
       if (allowedOrigins.includes(origin)) {
@@ -46,7 +49,7 @@ app.use(
   })
 );
 
-// 🔥 VERY IMPORTANT (preflight)
+// 🔥 Preflight fix
 app.options("*", cors());
 
 /* =========================
@@ -69,6 +72,7 @@ app.use(
    🗂 STATIC FILES
 ========================= */
 app.use("/uploads", express.static(path.join(__dirname, "uploads")));
+app.use("/uploads", express.static("uploads"));
 
 /* =========================
    🔌 DB CHECK
@@ -91,6 +95,10 @@ app.use("/funds", require("./routes/funds"));
 app.use("/treasurer", require("./routes/treasurer"));
 app.use("/reports", require("./routes/reports"));
 app.use("/receipts", require("./routes/receipts"));
+
+/* ASSOCIATION ✅ */
+app.use("/association", require("./routes/association"));
+app.use("/public", require("./routes/public"));
 
 /* EXPENSES */
 app.use("/expenses", require("./routes/expenses"));
