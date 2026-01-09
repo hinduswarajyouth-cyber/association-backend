@@ -10,7 +10,7 @@ const router = express.Router();
 const ADMIN_ROLES = ["SUPER_ADMIN", "PRESIDENT"];
 
 /* ======================================================
-   📅 GET ALL MEETINGS (ALL ROLES)
+   📅 GET ALL MEETINGS (ALL USERS)
 ====================================================== */
 router.get("/", verifyToken, async (req, res) => {
   try {
@@ -56,7 +56,6 @@ router.post(
         ]
       );
 
-      // 🔔 Notify all users
       const users = await pool.query("SELECT id FROM users");
       await notifyUsers(
         users.rows.map(u => u.id),
@@ -74,16 +73,73 @@ router.post(
 );
 
 /* ======================================================
+   ✏️ UPDATE MEETING (ADMIN / PRESIDENT)
+====================================================== */
+router.put(
+  "/:id",
+  verifyToken,
+  checkRole(...ADMIN_ROLES),
+  async (req, res) => {
+    try {
+      const { title, description, meeting_date, location, join_link } = req.body;
+
+      const { rows } = await pool.query(
+        `
+        UPDATE meetings
+        SET title=$1, description=$2, meeting_date=$3,
+            location=$4, join_link=$5
+        WHERE id=$6
+        RETURNING *
+        `,
+        [
+          title,
+          description,
+          meeting_date,
+          location,
+          join_link,
+          req.params.id,
+        ]
+      );
+
+      res.json(rows[0]);
+    } catch (err) {
+      console.error("UPDATE MEETING ERROR:", err.message);
+      res.status(500).json({ error: "Failed to update meeting" });
+    }
+  }
+);
+
+/* ======================================================
+   🗑 DELETE MEETING (ADMIN / PRESIDENT)
+====================================================== */
+router.delete(
+  "/:id",
+  verifyToken,
+  checkRole(...ADMIN_ROLES),
+  async (req, res) => {
+    try {
+      await pool.query("DELETE FROM meetings WHERE id=$1", [req.params.id]);
+      res.json({ success: true });
+    } catch (err) {
+      console.error("DELETE MEETING ERROR:", err.message);
+      res.status(500).json({ error: "Failed to delete meeting" });
+    }
+  }
+);
+
+/* ======================================================
    👥 JOIN MEETING (ALL ROLES)
+   ✅ DB SAFE (PRESENT only)
 ====================================================== */
 router.post("/join/:id", verifyToken, async (req, res) => {
   try {
     await pool.query(
       `
       INSERT INTO meeting_attendance (meeting_id, user_id, status)
-      VALUES ($1,$2,'JOINED')
+      VALUES ($1, $2, 'PRESENT')
       ON CONFLICT (meeting_id, user_id)
-      DO UPDATE SET status='JOINED', marked_at=NOW()
+      DO UPDATE
+      SET status='PRESENT', marked_at=NOW()
       `,
       [req.params.id, req.user.id]
     );
@@ -96,7 +152,7 @@ router.post("/join/:id", verifyToken, async (req, res) => {
 });
 
 /* ======================================================
-   📜 GET RESOLUTIONS (ALL ROLES)
+   📜 GET RESOLUTIONS
 ====================================================== */
 router.get("/resolution/:meetingId", verifyToken, async (req, res) => {
   try {
@@ -149,7 +205,7 @@ router.post(
 );
 
 /* ======================================================
-   🗳 VOTE ON RESOLUTION (ALL ROLES)
+   🗳 VOTE ON RESOLUTION
 ====================================================== */
 router.post("/vote/:rid", verifyToken, async (req, res) => {
   try {
@@ -164,9 +220,7 @@ router.post("/vote/:rid", verifyToken, async (req, res) => {
       return res.status(404).json({ error: "Resolution not found" });
     }
 
-    const reso = r.rows[0];
-
-    if (reso.is_locked || new Date() > new Date(reso.vote_deadline)) {
+    if (r.rows[0].is_locked || new Date() > new Date(r.rows[0].vote_deadline)) {
       return res.status(403).json({ error: "Voting closed" });
     }
 
