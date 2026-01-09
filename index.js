@@ -15,6 +15,37 @@ const app = express();
 app.set("trust proxy", 1);
 
 /* =========================
+   🌐 FORCE CORS HEADERS (CRITICAL FIX)
+   (Ensures chat/files/resolution work)
+========================= */
+app.use((req, res, next) => {
+  const origin = req.headers.origin;
+
+  if (
+    origin === "https://hinduswarajyouth.online" ||
+    origin === "https://www.hinduswarajyouth.online"
+  ) {
+    res.setHeader("Access-Control-Allow-Origin", origin);
+    res.setHeader("Access-Control-Allow-Credentials", "true");
+  }
+
+  res.setHeader(
+    "Access-Control-Allow-Methods",
+    "GET,POST,PUT,PATCH,DELETE,OPTIONS"
+  );
+  res.setHeader(
+    "Access-Control-Allow-Headers",
+    "Content-Type, Authorization"
+  );
+
+  if (req.method === "OPTIONS") {
+    return res.sendStatus(200);
+  }
+
+  next();
+});
+
+/* =========================
    🔐 SECURITY
 ========================= */
 app.use(
@@ -24,17 +55,17 @@ app.use(
 );
 
 /* =========================
-   🌐 CORS
+   🌐 CORS (KEEPED)
 ========================= */
 const allowedOrigins = [
   "https://hinduswarajyouth.online",
   "https://www.hinduswarajyouth.online",
-  "https://api.hinduswarajyouth.online", // ✅ ADD THIS
+  "https://api.hinduswarajyouth.online",
 ];
+
 app.use(
   cors({
     origin: function (origin, callback) {
-      // allow requests without origin (Postman, curl)
       if (!origin) return callback(null, true);
 
       if (allowedOrigins.includes(origin)) {
@@ -49,7 +80,6 @@ app.use(
   })
 );
 
-// 🔥 Preflight fix
 app.options("*", cors());
 
 /* =========================
@@ -72,7 +102,6 @@ app.use(
    🗂 STATIC FILES
 ========================= */
 app.use("/uploads", express.static(path.join(__dirname, "uploads")));
-app.use("/uploads", express.static("uploads"));
 
 /* =========================
    🔌 DB CHECK
@@ -83,7 +112,7 @@ pool
   .catch((err) => console.error("❌ DB Error:", err.message));
 
 /* =========================
-   🚏 ROUTES (NO /api)
+   🚏 ROUTES
 ========================= */
 
 /* AUTH */
@@ -96,7 +125,7 @@ app.use("/treasurer", require("./routes/treasurer"));
 app.use("/reports", require("./routes/reports"));
 app.use("/receipts", require("./routes/receipts"));
 
-/* ASSOCIATION ✅ */
+/* ASSOCIATION */
 app.use("/association", require("./routes/association"));
 app.use("/public", require("./routes/public"));
 

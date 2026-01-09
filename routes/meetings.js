@@ -3,6 +3,7 @@ const pool = require("../db");
 const verifyToken = require("../middleware/verifyToken");
 const checkRole = require("../middleware/checkRole");
 const multer = require("multer");
+const fs = require("fs");
 
 const router = express.Router();
 
@@ -11,14 +12,21 @@ const ROLES = {
   PRESIDENT: "PRESIDENT",
   MEMBER: "MEMBER",
 };
+
 const ADMIN_ROLES = [ROLES.SUPER_ADMIN, ROLES.PRESIDENT];
 
 /* ================= FILE UPLOAD ================= */
+const uploadDir = "uploads/meetings";
+if (!fs.existsSync(uploadDir)) {
+  fs.mkdirSync(uploadDir, { recursive: true });
+}
+
 const storage = multer.diskStorage({
-  destination: "uploads/meetings",
+  destination: uploadDir,
   filename: (req, file, cb) =>
     cb(null, Date.now() + "_" + file.originalname),
 });
+
 const upload = multer({ storage });
 
 /* ================= CREATE MEETING ================= */
@@ -27,46 +35,51 @@ router.post(
   verifyToken,
   checkRole(...ADMIN_ROLES),
   async (req, res) => {
-    const {
-      title,
-      description,
-      meeting_date,
-      location,
-      join_link,
-      is_public,
-    } = req.body;
-
-    if (!title || !meeting_date) {
-      return res.status(400).json({ error: "Title & date required" });
-    }
-
-    const { rows } = await pool.query(
-      `
-      INSERT INTO meetings
-      (title,description,meeting_date,location,join_link,is_public,created_by)
-      VALUES ($1,$2,$3,$4,$5,$6,$7)
-      RETURNING *
-      `,
-      [
+    try {
+      const {
         title,
-        description || null,
+        description,
         meeting_date,
-        location || null,
-        join_link || null,
-        is_public ?? false,
-        req.user.id,
-      ]
-    );
+        location,
+        join_link,
+        is_public,
+      } = req.body;
 
-    res.json(rows[0]);
+      if (!title || !meeting_date) {
+        return res.status(400).json({ error: "Title & date required" });
+      }
+
+      const { rows } = await pool.query(
+        `
+        INSERT INTO meetings
+        (title,description,meeting_date,location,join_link,is_public,created_by)
+        VALUES ($1,$2,$3,$4,$5,$6,$7)
+        RETURNING *
+        `,
+        [
+          title,
+          description || null,
+          meeting_date,
+          location || null,
+          join_link || null,
+          is_public ?? false,
+          req.user.id,
+        ]
+      );
+
+      res.json(rows[0]);
+    } catch (err) {
+      console.error("CREATE MEETING ERROR:", err.message);
+      res.status(500).json({ error: "Create meeting failed" });
+    }
   }
 );
 
-/* ================= GET MEETINGS ================= */
-router.get("/my", verifyToken, async (req, res) => {
+/* ================= GET MEETINGS (ALIAS) ================= */
+router.get("/", verifyToken, async (req, res) => {
   if (ADMIN_ROLES.includes(req.user.role)) {
     const { rows } = await pool.query(
-      `SELECT * FROM meetings ORDER BY meeting_date DESC`
+      "SELECT * FROM meetings ORDER BY meeting_date DESC"
     );
     return res.json(rows);
   }
@@ -85,7 +98,7 @@ router.get("/my", verifyToken, async (req, res) => {
   res.json(rows);
 });
 
-/* ================= UPDATE / DELETE ================= */
+/* ================= UPDATE ================= */
 router.put(
   "/:id",
   verifyToken,
@@ -114,12 +127,13 @@ router.put(
   }
 );
 
+/* ================= DELETE ================= */
 router.delete(
   "/:id",
   verifyToken,
   checkRole(ROLES.SUPER_ADMIN),
   async (req, res) => {
-    await pool.query(`DELETE FROM meetings WHERE id=$1`, [req.params.id]);
+    await pool.query("DELETE FROM meetings WHERE id=$1", [req.params.id]);
     res.json({ message: "Meeting deleted" });
   }
 );
@@ -170,7 +184,7 @@ router.post("/attendance/:id", verifyToken, async (req, res) => {
   res.json({ message: "Attendance marked" });
 });
 
-/* ================= FILE UPLOAD ================= */
+/* ================= FILES ================= */
 router.post(
   "/files/:id",
   verifyToken,
@@ -183,22 +197,30 @@ router.post(
       (meeting_id,file_path,file_type,uploaded_by)
       VALUES ($1,$2,$3,$4)
       `,
-      [
-        req.params.id,
-        req.file.path,
-        req.body.type,
-        req.user.id,
-      ]
+      [req.params.id, req.file.path, req.body.type, req.user.id]
     );
 
     res.json({ message: "File uploaded" });
   }
 );
 
+router.get("/files/:id", verifyToken, async (req, res) => {
+  const { rows } = await pool.query(
+    `
+    SELECT id, file_path, file_type, created_at
+    FROM meeting_files
+    WHERE meeting_id=$1
+    ORDER BY created_at DESC
+    `,
+    [req.params.id]
+  );
+  res.json(rows);
+});
+
 /* ================= RESOLUTIONS ================= */
 router.get("/resolution/:id", verifyToken, async (req, res) => {
   const { rows } = await pool.query(
-    `SELECT * FROM meeting_resolutions WHERE meeting_id=$1`,
+    "SELECT * FROM meeting_resolutions WHERE meeting_id=$1",
     [req.params.id]
   );
   res.json(rows);
@@ -256,25 +278,5 @@ router.get(
     res.json(rows);
   }
 );
-// =========================
-// 📥 GET AGENDA / MINUTES (DOWNLOAD)
-// =========================
-router.get("/files/:id", verifyToken, async (req, res) => {
-  try {
-    const { rows } = await pool.query(
-      `
-      SELECT id, file_path, file_type, created_at
-      FROM meeting_files
-      WHERE meeting_id = $1
-      ORDER BY created_at DESC
-      `,
-      [req.params.id]
-    );
 
-    res.json(rows);
-  } catch (err) {
-    console.error("FILES FETCH ERROR:", err.message);
-    res.status(500).json({ error: "Failed to fetch files" });
-  }
-});
 module.exports = router;
