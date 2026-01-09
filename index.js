@@ -19,14 +19,33 @@ app.use(
 );
 
 /* =========================
-   🌐 CORS
+   🌐 CORS (🔥 FIXED)
 ========================= */
+const allowedOrigins = [
+  "https://hinduswarajyouth.online",
+  "https://www.hinduswarajyouth.online",
+];
+
 app.use(
   cors({
-    origin: true,
+    origin: function (origin, callback) {
+      // allow requests with no origin (postman, curl)
+      if (!origin) return callback(null, true);
+
+      if (allowedOrigins.includes(origin)) {
+        callback(null, true);
+      } else {
+        callback(new Error("CORS not allowed"));
+      }
+    },
+    methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+    allowedHeaders: ["Content-Type", "Authorization"],
     credentials: true,
   })
 );
+
+// 🔥 VERY IMPORTANT (preflight)
+app.options("*", cors());
 
 /* =========================
    📦 BODY PARSERS
@@ -58,7 +77,7 @@ pool
   .catch((err) => console.error("❌ DB Error:", err.message));
 
 /* =========================
-   🚏 ROUTES (FINAL – NO /api)
+   🚏 ROUTES (NO /api)
 ========================= */
 
 /* AUTH */
@@ -74,12 +93,12 @@ app.use("/receipts", require("./routes/receipts"));
 /* EXPENSES */
 app.use("/expenses", require("./routes/expenses"));
 
-/* ADMIN */
+/* ADMIN + DASHBOARD */
 app.use("/admin", require("./routes/admin"));
 app.use("/dashboard", require("./routes/dashboard"));
 
 /* FEATURES */
-app.use("/suggestions", require("./routes/suggestions")); // ✅ ADDED
+app.use("/suggestions", require("./routes/suggestions"));
 app.use("/complaints", require("./routes/complaints"));
 app.use("/meetings", require("./routes/meetings"));
 app.use("/announcements", require("./routes/announcements"));
@@ -96,10 +115,10 @@ app.get("/", (req, res) => {
    ❗ GLOBAL ERROR HANDLER
 ========================= */
 app.use((err, req, res, next) => {
-  console.error("GLOBAL ERROR 👉", err);
+  console.error("GLOBAL ERROR 👉", err.message);
   res.status(500).json({
     success: false,
-    error: "Internal server error",
+    error: err.message || "Internal server error",
   });
 });
 
