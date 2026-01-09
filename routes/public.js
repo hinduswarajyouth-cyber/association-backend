@@ -4,36 +4,37 @@ const pool = require("../db");
 
 /* =========================
    🏛 PUBLIC ASSOCIATION INFO
+   GET /public/association-info
 ========================= */
-router.get("/association", async (req, res) => {
+router.get("/association-info", async (req, res) => {
   try {
-    const { rows } = await pool.query(
+    const assoc = await pool.query(
       "SELECT * FROM association_info ORDER BY id DESC LIMIT 1"
     );
-    res.json(rows[0] || null);
+
+    const funds = await pool.query(
+      "SELECT id, fund_name FROM funds WHERE status='ACTIVE' ORDER BY fund_name"
+    );
+
+    res.json({
+      success: true,
+      data: {
+        association: assoc.rows[0] || null,
+        funds: funds.rows,
+      },
+    });
   } catch (err) {
     console.error("PUBLIC ASSOCIATION ERROR 👉", err.message);
-    res.status(500).json({ error: "Failed to load association info" });
-  }
-});
-
-/* =========================
-   💰 PUBLIC FUNDS LIST
-========================= */
-router.get("/funds", async (req, res) => {
-  try {
-    const { rows } = await pool.query(
-      "SELECT id, fund_name FROM funds WHERE status='ACTIVE'"
-    );
-    res.json(rows);
-  } catch (err) {
-    console.error("PUBLIC FUNDS ERROR 👉", err.message);
-    res.status(500).json({ error: "Failed to load funds" });
+    res.status(500).json({
+      success: false,
+      error: "Failed to load association info",
+    });
   }
 });
 
 /* =========================
    🤝 PUBLIC DONATION
+   POST /public/donate
 ========================= */
 router.post("/donate", async (req, res) => {
   try {
@@ -46,7 +47,7 @@ router.post("/donate", async (req, res) => {
       reference_no,
     } = req.body;
 
-    if (!amount || !fund_id || !payment_mode) {
+    if (!fund_id || !amount || !payment_mode) {
       return res.status(400).json({
         success: false,
         error: "Required fields missing",
@@ -71,7 +72,7 @@ router.post("/donate", async (req, res) => {
 
     res.json({
       success: true,
-      message: "Donation submitted successfully",
+      message: "🙏 Thank you! Donation submitted successfully",
     });
   } catch (err) {
     console.error("PUBLIC DONATION ERROR 👉", err.message);
