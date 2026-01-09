@@ -2,19 +2,19 @@ const pool = require("../db");
 
 /**
  * =====================================================
- * FINAL AUDIT LOGGER (DB MATCHED & STABLE)
+ * FINAL AUDIT LOGGER (PRODUCTION SAFE)
  * =====================================================
  *
  * TABLE: audit_logs
  * -----------------------------------------------------
- * id            UUID
- * action        TEXT
+ * id            UUID DEFAULT gen_random_uuid()
+ * action        TEXT NOT NULL
  * entity        TEXT
  * entity_id     INTEGER
  * performed_by  VARCHAR
- * user_id       UUID   (NOT NULL)
+ * user_id       UUID NOT NULL
  * metadata      JSONB
- * created_at    TIMESTAMP
+ * created_at    TIMESTAMP DEFAULT NOW()
  * -----------------------------------------------------
  */
 
@@ -22,15 +22,15 @@ module.exports = async function logAudit(
   action,
   entity,
   entityId = null,
-  user = null,
-  metadata = null
+  user,
+  metadata = {}
 ) {
   try {
-    const performedBy =
-      typeof user === "object" && user?.name ? user.name : null;
-
-    const userId =
-      typeof user === "object" && user?.id ? user.id : null;
+    if (!user || !user.id) {
+      // Never allow silent bad inserts
+      console.warn("Audit skipped: missing user");
+      return;
+    }
 
     await pool.query(
       `
@@ -43,8 +43,8 @@ module.exports = async function logAudit(
         action,
         entity,
         entityId,
-        performedBy,
-        userId,
+        user.name || "SYSTEM",
+        user.id,
         metadata,
       ]
     );
