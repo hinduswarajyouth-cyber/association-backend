@@ -46,6 +46,32 @@ router.post(
     res.json(rows[0]);
   }
 );
+/* =========================
+   👥 JOIN MEETING
+   (ALL ROLES)
+========================= */
+router.post("/join/:id", verifyToken, async (req, res) => {
+  try {
+    const meetingId = req.params.id;
+    const userId = req.user.id;
+
+    // 1️⃣ Mark attendance as JOINED
+    await pool.query(
+      `
+      INSERT INTO meeting_attendance (meeting_id, user_id, status)
+      VALUES ($1, $2, 'JOINED')
+      ON CONFLICT (meeting_id, user_id)
+      DO UPDATE SET status='JOINED', marked_at=NOW()
+      `,
+      [meetingId, userId]
+    );
+
+    res.json({ success: true, message: "Joined meeting" });
+  } catch (err) {
+    console.error("JOIN MEETING ERROR 👉", err.message);
+    res.status(500).json({ error: "Failed to join meeting" });
+  }
+});
 
 /* ================= CREATE RESOLUTION ================= */
 router.post(
