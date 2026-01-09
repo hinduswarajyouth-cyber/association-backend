@@ -20,8 +20,8 @@ const ROLES = {
 };
 
 /* =====================================================
-   🔵 ADMIN / OFFICE BEARERS DASHBOARD SUMMARY
-   GET /api/dashboard/admin-summary
+   🔵 ADMIN / OFFICE BEARERS SUMMARY
+   GET /dashboard/admin-summary
 ===================================================== */
 router.get(
   "/admin-summary",
@@ -49,21 +49,24 @@ router.get(
       ]);
 
       res.json({
-        total_members: Number(members.rows[0].count),
-        approved_receipts: Number(approved.rows[0].count),
-        total_collection: Number(approved.rows[0].total),
-        cancelled_receipts: Number(cancelled.rows[0].count),
+        success: true,
+        data: {
+          total_members: Number(members.rows[0].count),
+          approved_receipts: Number(approved.rows[0].count),
+          total_collection: Number(approved.rows[0].total),
+          cancelled_receipts: Number(cancelled.rows[0].count),
+        },
       });
     } catch (err) {
       console.error("ADMIN SUMMARY ERROR 👉", err.message);
-      res.status(500).json({ error: "Admin dashboard failed" });
+      res.status(500).json({ success: false, error: "Admin dashboard failed" });
     }
   }
 );
 
 /* =====================================================
-   🧾 RECENT RECEIPTS (READ-ONLY)
-   GET /api/dashboard/recent-contributions
+   🧾 RECENT CONTRIBUTIONS
+   GET /dashboard/recent-contributions
 ===================================================== */
 router.get(
   "/recent-contributions",
@@ -91,17 +94,20 @@ router.get(
         LIMIT 5
       `);
 
-      res.json(result.rows);
+      res.json({
+        success: true,
+        data: result.rows,
+      });
     } catch (err) {
       console.error("RECENT ERROR 👉", err.message);
-      res.status(500).json({ error: "Failed to load recent receipts" });
+      res.status(500).json({ success: false, error: "Failed to load recent receipts" });
     }
   }
 );
 
 /* =====================================================
-   💰 FUND BALANCES (LEDGER BASED)
-   GET /api/dashboard/funds
+   💰 FUND BALANCES
+   GET /dashboard/funds
 ===================================================== */
 router.get(
   "/funds",
@@ -134,17 +140,20 @@ router.get(
         ORDER BY f.fund_name
       `);
 
-      res.json(result.rows);
+      res.json({
+        success: true,
+        data: result.rows,
+      });
     } catch (err) {
       console.error("FUNDS ERROR 👉", err.message);
-      res.status(500).json({ error: "Failed to load funds" });
+      res.status(500).json({ success: false, error: "Failed to load funds" });
     }
   }
 );
 
 /* =====================================================
-   📈 CASHFLOW (ADMIN / OFFICE BEARERS)
-   GET /api/dashboard/cashflow?year=2025&month=9
+   📈 CASHFLOW
+   GET /dashboard/cashflow?year=2025&month=9
 ===================================================== */
 router.get(
   "/cashflow",
@@ -160,7 +169,7 @@ router.get(
     try {
       const { year, month } = req.query;
       if (!year || !month) {
-        return res.status(400).json({ error: "year & month required" });
+        return res.status(400).json({ success: false, error: "year & month required" });
       }
 
       const result = await pool.query(
@@ -175,17 +184,20 @@ router.get(
         [year, month]
       );
 
-      res.json(result.rows[0]);
+      res.json({
+        success: true,
+        data: result.rows[0],
+      });
     } catch (err) {
       console.error("CASHFLOW ERROR 👉", err.message);
-      res.status(500).json({ error: "Cashflow failed" });
+      res.status(500).json({ success: false, error: "Cashflow failed" });
     }
   }
 );
 
 /* =====================================================
-   🟠 TREASURER DASHBOARD SUMMARY
-   GET /api/dashboard/treasurer-summary
+   🟠 TREASURER SUMMARY
+   GET /dashboard/treasurer-summary
 ===================================================== */
 router.get(
   "/treasurer-summary",
@@ -199,17 +211,20 @@ router.get(
           (SELECT COUNT(*) FROM contributions WHERE status='APPROVED') AS approved_contributions
       `);
 
-      res.json(result.rows[0]);
+      res.json({
+        success: true,
+        data: result.rows[0],
+      });
     } catch (err) {
       console.error("TREASURER SUMMARY ERROR 👉", err.message);
-      res.status(500).json({ error: "Treasurer dashboard failed" });
+      res.status(500).json({ success: false, error: "Treasurer dashboard failed" });
     }
   }
 );
 
 /* =====================================================
-   🟣 MEMBER DASHBOARD (SELF ONLY)
-   GET /api/dashboard/member
+   🟣 MEMBER DASHBOARD
+   GET /dashboard/member
 ===================================================== */
 router.get(
   "/member",
@@ -231,10 +246,13 @@ router.get(
         [req.user.id]
       );
 
-      res.json({ contributions: result.rows });
+      res.json({
+        success: true,
+        data: result.rows,
+      });
     } catch (err) {
       console.error("MEMBER DASHBOARD ERROR 👉", err.message);
-      res.status(500).json({ error: "Member dashboard failed" });
+      res.status(500).json({ success: false, error: "Member dashboard failed" });
     }
   }
 );
