@@ -2,14 +2,14 @@ const express = require("express");
 const pool = require("../db");
 const verifyToken = require("../middleware/verifyToken");
 const checkRole = require("../middleware/checkRole");
-const PDFDocument = require("pdfkit");
-const fs = require("fs");
+const notifyUsers = require("../utils/notify");
+const { generateResolutionPDF } = require("../utils/generateResolutionPDF");
 
 const router = express.Router();
-const ADMIN = ["SUPER_ADMIN", "PRESIDENT"];
-const EC = ["EC_MEMBER"];
 
-/* ================= GET ALL MEETINGS (ALL USERS) ================= */
+const ADMIN = ["SUPER_ADMIN", "PRESIDENT"];
+
+/* ================= GET MEETINGS ================= */
 router.get("/", verifyToken, async (req, res) => {
   const { rows } = await pool.query(
     "SELECT * FROM meetings ORDER BY meeting_date DESC"
@@ -23,13 +23,7 @@ router.post(
   verifyToken,
   checkRole(...ADMIN),
   async (req, res) => {
-    const {
-      title,
-      description,
-      meeting_date,
-      location,
-      join_link,
-    } = req.body;
+    const { title, description, meeting_date, location, join_link } = req.body;
 
     const { rows } = await pool.query(
       `
@@ -41,50 +35,19 @@ router.post(
       [title, description, meeting_date, location, join_link, req.user.id]
     );
 
+    const users = await pool.query("SELECT id FROM users");
+    await notifyUsers(
+      users.rows.map(u => u.id),
+      "📅 New Meeting Scheduled",
+      `Meeting: ${title}`,
+      "/meetings"
+    );
+
     res.json(rows[0]);
   }
 );
 
-/* ================= AUTO JOIN ================= */
-router.post("/join/:id", verifyToken, async (req, res) => {
-  await pool.query(
-    `
-    INSERT INTO meeting_attendance (meeting_id,user_id)
-    VALUES ($1,$2)
-    ON CONFLICT DO NOTHING
-    `,
-    [req.params.id, req.user.id]
-  );
-  res.json({ success: true });
-});
-
-/* ================= CHAT ================= */
-router.get("/chat/:id", verifyToken, async (req, res) => {
-  const { rows } = await pool.query(
-    `
-    SELECT m.message, u.name, m.created_at
-    FROM meeting_messages m
-    JOIN users u ON u.id=m.user_id
-    WHERE meeting_id=$1
-    ORDER BY m.created_at
-    `,
-    [req.params.id]
-  );
-  res.json(rows);
-});
-
-router.post("/chat/:id", verifyToken, async (req, res) => {
-  await pool.query(
-    `
-    INSERT INTO meeting_messages (meeting_id,user_id,message)
-    VALUES ($1,$2,$3)
-    `,
-    [req.params.id, req.user.id, req.body.message]
-  );
-  res.json({ success: true });
-});
-
-/* ================= RESOLUTION CREATE ================= */
+/* ================= CREATE RESOLUTION ================= */
 router.post(
   "/resolution/:meetingId",
   verifyToken,
@@ -108,20 +71,7 @@ router.post(
   }
 );
 
-/* ================= GET RESOLUTIONS ================= */
-router.get("/resolution/:meetingId", verifyToken, async (req, res) => {
-  const { rows } = await pool.query(
-    `
-    SELECT * FROM meeting_resolutions
-    WHERE meeting_id=$1
-    ORDER BY created_at
-    `,
-    [req.params.meetingId]
-  );
-  res.json(rows);
-});
-
-/* ================= VOTE (EC ONLY) ================= */
+/* ================= VOTE ================= */
 router.post("/vote/:rid", verifyToken, async (req, res) => {
   const { vote } = req.body;
 
@@ -149,7 +99,7 @@ router.post("/vote/:rid", verifyToken, async (req, res) => {
   res.json({ success: true });
 });
 
-/* ================= FINALIZE RESOLUTION ================= */
+/* ================= FINALIZE ================= */
 async function finalizeResolution(id) {
   const votes = await pool.query(
     `
@@ -168,7 +118,7 @@ async function finalizeResolution(id) {
     if (v.vote === "NO") no = Number(v.c);
   });
 
-  let status = yes > no ? "APPROVED" : "REJECTED";
+  const status = yes > no ? "APPROVED" : "REJECTED";
 
   await pool.query(
     `
@@ -180,53 +130,16 @@ async function finalizeResolution(id) {
   );
 
   if (status === "APPROVED") {
-    await generatePDF(id);
+    await generateResolutionPDF(id);
+
+    const users = await pool.query("SELECT id FROM users");
+    await notifyUsers(
+      users.rows.map(u => u.id),
+      "✅ Resolution Approved",
+      "A resolution has been approved",
+      "/meetings"
+    );
   }
-}
-
-/* ================= PDF ================= */
-async function generatePDF(id) {
-  const { rows } = await pool.query(
-    `
-    SELECT r.*, m.title meeting_title, m.meeting_date,
-           a.name association_name, a.registration_no
-    FROM meeting_resolutions r
-    JOIN meetings m ON m.id=r.meeting_id
-    JOIN association_info a ON TRUE
-    WHERE r.id=$1
-    `,
-    [id]
-  );
-
-  const r = rows[0];
-  const path = `uploads/resolutions/resolution_${id}.pdf`;
-  fs.mkdirSync("uploads/resolutions", { recursive: true });
-
-  const doc = new PDFDocument();
-  doc.pipe(fs.createWriteStream(path));
-
-  doc.fontSize(16).text(r.association_name, { align: "center" });
-  doc.text(`Reg No: ${r.registration_no}`, { align: "center" });
-  doc.moveDown();
-
-  doc.fontSize(14).text("RESOLUTION", { align: "center", underline: true });
-  doc.moveDown();
-  doc.text(`Meeting: ${r.meeting_title}`);
-  doc.text(`Date: ${new Date(r.meeting_date).toLocaleString()}`);
-  doc.moveDown();
-  doc.text(r.content);
-  doc.moveDown();
-  doc.text(`Status: APPROVED`);
-  doc.moveDown(2);
-  doc.text("President Signature: ____________");
-  doc.text("Secretary Signature: ____________");
-
-  doc.end();
-
-  await pool.query(
-    "UPDATE meeting_resolutions SET pdf_path=$1 WHERE id=$2",
-    [path, id]
-  );
 }
 
 module.exports = router;
