@@ -8,6 +8,8 @@ const path = require("path");
 
 const pool = require("./db");
 const app = express();
+// ✅ TRUST PROXY (FIXES X-Forwarded-For ERROR)
+app.set("trust proxy", 1);
 
 /* =========================
    🔐 SECURITY

@@ -6,7 +6,7 @@ const checkRole = require("../middleware/checkRole");
 const router = express.Router();
 
 /* =====================================================
-   SUBMIT SUGGESTION
+   SUBMIT SUGGESTION (ALL USERS)
 ===================================================== */
 router.post("/", verifyToken, async (req, res) => {
   try {
@@ -17,12 +17,17 @@ router.post("/", verifyToken, async (req, res) => {
     }
 
     await pool.query(
-      `INSERT INTO suggestions (member_id, title, message, type, status)
-       VALUES ($1, $2, $3, $4, 'PENDING')`,
-      [req.user.id, title || null, message, type]
+      `
+      INSERT INTO suggestions (member_id, title, message, type, status)
+      VALUES ($1, $2, $3, $4, 'PENDING')
+      `,
+      [String(req.user.id), title || null, message, type]
     );
 
-    res.json({ message: "Suggestion submitted" });
+    res.json({
+      success: true,
+      message: "Suggestion submitted",
+    });
   } catch (err) {
     console.error("SUBMIT SUGGESTION ERROR 👉", err.message);
     res.status(500).json({ error: "Failed to submit suggestion" });
@@ -30,19 +35,31 @@ router.post("/", verifyToken, async (req, res) => {
 });
 
 /* =====================================================
-   MY SUGGESTIONS
+   MY SUGGESTIONS (LOGGED-IN USER)
 ===================================================== */
 router.get("/my", verifyToken, async (req, res) => {
   try {
     const { rows } = await pool.query(
-      `SELECT *
-       FROM suggestions
-       WHERE member_id = $1
-       ORDER BY created_at DESC`,
-      [req.user.id]
+      `
+      SELECT
+        id,
+        member_id,
+        title,
+        message,
+        type,
+        status,
+        created_at
+      FROM suggestions
+      WHERE member_id = $1
+      ORDER BY created_at DESC
+      `,
+      [String(req.user.id)]
     );
 
-    res.json(rows);
+    res.json({
+      success: true,
+      data: rows,
+    });
   } catch (err) {
     console.error("MY SUGGESTIONS ERROR 👉", err.message);
     res.status(500).json({ error: "Failed to load suggestions" });
@@ -60,14 +77,24 @@ router.get(
     try {
       const { rows } = await pool.query(`
         SELECT
-          s.*,
-          u.name AS member_name
+          s.id,
+          s.member_id,
+          s.title,
+          s.message,
+          s.type,
+          s.status,
+          s.created_at,
+          m.name AS member_name
         FROM suggestions s
-        JOIN users u ON u.id = s.member_id
+        LEFT JOIN members m
+          ON m.id::text = s.member_id
         ORDER BY s.created_at DESC
       `);
 
-      res.json(rows);
+      res.json({
+        success: true,
+        data: rows,
+      });
     } catch (err) {
       console.error("ALL SUGGESTIONS ERROR 👉", err.message);
       res.status(500).json({ error: "Failed to load suggestions" });
@@ -76,7 +103,7 @@ router.get(
 );
 
 /* =====================================================
-   APPROVE / REJECT
+   APPROVE / REJECT (ADMIN / PRESIDENT)
 ===================================================== */
 router.put(
   "/:id/status",
@@ -95,7 +122,10 @@ router.put(
         [status, req.params.id]
       );
 
-      res.json({ message: "Status updated" });
+      res.json({
+        success: true,
+        message: "Status updated",
+      });
     } catch (err) {
       console.error("UPDATE STATUS ERROR 👉", err.message);
       res.status(500).json({ error: "Failed to update status" });
