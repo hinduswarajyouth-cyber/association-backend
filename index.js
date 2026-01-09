@@ -29,8 +29,8 @@ app.use(
 const allowedOrigins = [
   "https://hinduswarajyouth.online",
   "https://www.hinduswarajyouth.online",
+  "https://api.hinduswarajyouth.online", // ✅ ADD THIS
 ];
-
 app.use(
   cors({
     origin: function (origin, callback) {

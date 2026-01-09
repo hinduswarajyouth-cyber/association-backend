@@ -3,129 +3,126 @@ const router = express.Router();
 const pool = require("../db");
 const verifyToken = require("../middleware/verifyToken");
 const checkRole = require("../middleware/checkRole");
-const uploadLogo = require("../middleware/uploadLogo");
+const multer = require("multer");
+const path = require("path");
 
 /* =========================
-   GET ASSOCIATION INFO
+   MULTER CONFIG
 ========================= */
-router.get("/", verifyToken, async (req, res) => {
-  try {
-    const { rows } = await pool.query(
+const storage = multer.diskStorage({
+  destination: "uploads/",
+  filename: (_, file, cb) => {
+    cb(null, Date.now() + path.extname(file.originalname));
+  },
+});
+
+const upload = multer({ storage });
+
+/* =========================
+   GET ASSOCIATION (ADMIN)
+   GET /association
+========================= */
+router.get(
+  "/",
+  verifyToken,
+  checkRole("SUPER_ADMIN", "PRESIDENT"),
+  async (req, res) => {
+    const result = await pool.query(
       "SELECT * FROM association_info ORDER BY id DESC LIMIT 1"
     );
 
-    res.json({ success: true, data: rows[0] || null });
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ success: false, error: "Load failed" });
+    res.json({
+      success: true,
+      data: result.rows[0] || {},
+    });
   }
-});
+);
 
 /* =========================
-   CREATE / UPDATE (ADMIN)
-   WITH LOGO UPLOAD ✅
+   SAVE / UPDATE ASSOCIATION
+   POST /association
 ========================= */
 router.post(
   "/",
   verifyToken,
   checkRole("SUPER_ADMIN", "PRESIDENT"),
-  uploadLogo.single("logo"),
+  upload.single("logo"),
   async (req, res) => {
-    try {
-      const {
-        name,
-        registration_no,
-        established_year,
-        address,
-        phone,
-        email,
-        bank_name,
-        account_no,
-        ifsc,
-      } = req.body;
+    const {
+      name,
+      registration_no,
+      established_year,
+      phone,
+      email,
+      address,
+      bank_name,
+      account_no,
+      ifsc,
+    } = req.body;
 
-      const logo = req.file ? `/uploads/${req.file.filename}` : null;
+    const logo = req.file ? `/uploads/${req.file.filename}` : null;
 
-      const exists = await pool.query(
-        "SELECT id, logo FROM association_info LIMIT 1"
+    const existing = await pool.query(
+      "SELECT id FROM association_info ORDER BY id DESC LIMIT 1"
+    );
+
+    if (existing.rows.length > 0) {
+      // UPDATE
+      await pool.query(
+        `
+        UPDATE association_info SET
+          name=$1,
+          registration_no=$2,
+          established_year=$3,
+          phone=$4,
+          email=$5,
+          address=$6,
+          bank_name=$7,
+          account_no=$8,
+          ifsc=$9,
+          logo=COALESCE($10, logo),
+          updated_at=NOW()
+        WHERE id=$11
+        `,
+        [
+          name,
+          registration_no,
+          established_year,
+          phone,
+          email,
+          address,
+          bank_name,
+          account_no,
+          ifsc,
+          logo,
+          existing.rows[0].id,
+        ]
       );
-
-      if (exists.rows.length === 0) {
-        await pool.query(
-          `
-          INSERT INTO association_info
-          (name, registration_no, established_year, address, phone, email, bank_name, account_no, ifsc, logo)
-          VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
-          `,
-          [
-            name,
-            registration_no,
-            established_year,
-            address,
-            phone,
-            email,
-            bank_name,
-            account_no,
-            ifsc,
-            logo,
-          ]
-        );
-      } else {
-        await pool.query(
-          `
-          UPDATE association_info SET
-            name=$1,
-            registration_no=$2,
-            established_year=$3,
-            address=$4,
-            phone=$5,
-            email=$6,
-            bank_name=$7,
-            account_no=$8,
-            ifsc=$9,
-            logo=COALESCE($10, logo),
-            updated_at=NOW()
-          WHERE id=$11
-          `,
-          [
-            name,
-            registration_no,
-            established_year,
-            address,
-            phone,
-            email,
-            bank_name,
-            account_no,
-            ifsc,
-            logo,
-            exists.rows[0].id,
-          ]
-        );
-      }
-
-      res.json({ success: true, message: "Association info saved" });
-    } catch (err) {
-      console.error(err);
-      res.status(500).json({ success: false, error: "Save failed" });
+    } else {
+      // INSERT
+      await pool.query(
+        `
+        INSERT INTO association_info
+        (name, registration_no, established_year, phone, email, address,
+         bank_name, account_no, ifsc, logo, created_at, updated_at)
+        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,NOW(),NOW())
+        `,
+        [
+          name,
+          registration_no,
+          established_year,
+          phone,
+          email,
+          address,
+          bank_name,
+          account_no,
+          ifsc,
+          logo,
+        ]
+      );
     }
-  }
-);
 
-/* =========================
-   DELETE (SUPER ADMIN)
-========================= */
-router.delete(
-  "/",
-  verifyToken,
-  checkRole("SUPER_ADMIN"),
-  async (req, res) => {
-    try {
-      await pool.query("DELETE FROM association_info");
-      res.json({ success: true, message: "Association info deleted" });
-    } catch (err) {
-      console.error(err);
-      res.status(500).json({ success: false, error: "Delete failed" });
-    }
+    res.json({ success: true, message: "Association info saved" });
   }
 );
 
