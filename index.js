@@ -7,15 +7,16 @@ const rateLimit = require("express-rate-limit");
 const path = require("path");
 
 const pool = require("./db");
+
 const app = express();
 
 /* =========================
-   ✅ TRUST PROXY
+   ✅ TRUST PROXY (RENDER)
 ========================= */
 app.set("trust proxy", 1);
 
 /* =========================
-   🔐 SECURITY
+   🔐 SECURITY HEADERS
 ========================= */
 app.use(
   helmet({
@@ -24,33 +25,35 @@ app.use(
 );
 
 /* =========================
-   🌐 CORS (FINAL & SAFE)
+   🌐 CORS (FINAL – NO ERRORS)
 ========================= */
 const allowedOrigins = [
   "https://hinduswarajyouth.online",
   "https://www.hinduswarajyouth.online",
   "https://api.hinduswarajyouth.online",
+  "http://localhost:3000",
 ];
 
 app.use(
   cors({
     origin: (origin, callback) => {
-      // Allow server-to-server / Postman
+      // Allow server-side tools (Postman, curl)
       if (!origin) return callback(null, true);
 
       if (allowedOrigins.includes(origin)) {
-        callback(null, true);
-      } else {
-        callback(new Error("CORS not allowed"));
+        return callback(null, true);
       }
+
+      // ❗ IMPORTANT: do NOT throw error
+      return callback(null, false);
     },
-    credentials: true,
     methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
     allowedHeaders: ["Content-Type", "Authorization"],
+    credentials: true,
   })
 );
 
-// Preflight
+// 🔥 Preflight support (VERY IMPORTANT)
 app.options("*", cors());
 
 /* =========================
@@ -60,7 +63,7 @@ app.use(express.json({ limit: "10mb" }));
 app.use(express.urlencoded({ extended: true }));
 
 /* =========================
-   ⏱ RATE LIMIT
+   ⏱ RATE LIMITING
 ========================= */
 app.use(
   rateLimit({
@@ -77,7 +80,7 @@ app.use(
 app.use("/uploads", express.static(path.join(__dirname, "uploads")));
 
 /* =========================
-   🔌 DB CHECK
+   🔌 DB HEALTH CHECK
 ========================= */
 pool
   .query("SELECT 1")
@@ -88,10 +91,10 @@ pool
    🚏 ROUTES
 ========================= */
 
-/* AUTH */
+// AUTH
 app.use("/auth", require("./routes/auth"));
 
-/* CORE */
+// CORE MODULES
 app.use("/members", require("./routes/members"));
 app.use("/funds", require("./routes/funds"));
 app.use("/treasurer", require("./routes/treasurer"));
@@ -99,18 +102,18 @@ app.use("/reports", require("./routes/reports"));
 app.use("/receipts", require("./routes/receipts"));
 app.use("/notifications", require("./routes/notifications"));
 
-/* ASSOCIATION */
+// ASSOCIATION
 app.use("/association", require("./routes/association"));
 app.use("/public", require("./routes/public"));
 
-/* EXPENSES */
+// EXPENSES
 app.use("/expenses", require("./routes/expenses"));
 
-/* ADMIN + DASHBOARD */
+// ADMIN & DASHBOARD
 app.use("/admin", require("./routes/admin"));
 app.use("/dashboard", require("./routes/dashboard"));
 
-/* FEATURES */
+// FEATURES
 app.use("/suggestions", require("./routes/suggestions"));
 app.use("/complaints", require("./routes/complaints"));
 app.use("/meetings", require("./routes/meetings"));
@@ -118,20 +121,24 @@ app.use("/announcements", require("./routes/announcements"));
 app.use("/contributions", require("./routes/contributions"));
 
 /* =========================
-   🏠 ROOT
+   🏠 ROOT & HEALTH
 ========================= */
 app.get("/", (req, res) => {
   res.send("🚀 Association Backend Running");
+});
+
+app.get("/health", (req, res) => {
+  res.status(200).send("OK");
 });
 
 /* =========================
    ❗ GLOBAL ERROR HANDLER
 ========================= */
 app.use((err, req, res, next) => {
-  console.error("GLOBAL ERROR 👉", err.message);
+  console.error("GLOBAL ERROR 👉", err);
   res.status(500).json({
     success: false,
-    error: err.message || "Internal server error",
+    error: "Internal server error",
   });
 });
 

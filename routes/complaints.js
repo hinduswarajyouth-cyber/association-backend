@@ -5,13 +5,6 @@ const checkRole = require("../middleware/checkRole");
 
 const router = express.Router();
 
-const ADMIN = ["SUPER_ADMIN", "PRESIDENT"];
-const OFFICE = [
-  "VICE_PRESIDENT",
-  "GENERAL_SECRETARY",
-  "JOINT_SECRETARY",
-  "EC_MEMBER",
-];
 /* =========================
    ROLES
 ========================= */
@@ -25,6 +18,7 @@ const ROLES = {
   MEMBER: "MEMBER",
 };
 
+const ADMIN_ROLES = [ROLES.SUPER_ADMIN, ROLES.PRESIDENT];
 const OFFICE_ROLES = [
   ROLES.VICE_PRESIDENT,
   ROLES.GENERAL_SECRETARY,
@@ -32,17 +26,13 @@ const OFFICE_ROLES = [
   ROLES.EC_MEMBER,
 ];
 
-const ADMIN_ROLES = [
-  ROLES.SUPER_ADMIN,
-  ROLES.PRESIDENT,
-];
-/* =====================================================
-   CREATE COMPLAINT (ALL USERS)
-===================================================== */
+/* =========================
+   CREATE COMPLAINT (ALL)
+========================= */
 router.post("/create", verifyToken, async (req, res) => {
   const { subject, description, comment } = req.body;
   if (!subject || !description || !comment)
-    return res.status(400).json({ error: "Comment required" });
+    return res.status(400).json({ error: "All fields required" });
 
   const { rows } = await pool.query(
     `INSERT INTO complaints (member_id, subject, description)
@@ -60,20 +50,18 @@ router.post("/create", verifyToken, async (req, res) => {
   res.json({ success: true });
 });
 
-/* =====================================================
+/* =========================
    VIEW
-===================================================== */
+========================= */
 router.get("/my", verifyToken, async (req, res) => {
   const { rows } = await pool.query(
-    `SELECT * FROM complaints
-     WHERE member_id=$1
-     ORDER BY created_at DESC`,
+    `SELECT * FROM complaints WHERE member_id=$1 ORDER BY created_at DESC`,
     [req.user.id]
   );
   res.json(rows);
 });
 
-router.get("/assigned", verifyToken, checkRole(...OFFICE), async (req, res) => {
+router.get("/assigned", verifyToken, checkRole(...OFFICE_ROLES), async (req, res) => {
   const { rows } = await pool.query(
     `SELECT * FROM complaints
      WHERE assigned_role=$1
@@ -83,17 +71,17 @@ router.get("/assigned", verifyToken, checkRole(...OFFICE), async (req, res) => {
   res.json(rows);
 });
 
-router.get("/all", verifyToken, checkRole(...ADMIN), async (_, res) => {
+router.get("/all", verifyToken, checkRole(...ADMIN_ROLES), async (_, res) => {
   const { rows } = await pool.query(
     `SELECT * FROM complaints ORDER BY created_at DESC`
   );
   res.json(rows);
 });
 
-/* =====================================================
-   ASSIGN / OVERRIDE (PRESIDENT / ADMIN)
-===================================================== */
-router.put("/assign/:id", verifyToken, checkRole(...ADMIN), async (req, res) => {
+/* =========================
+   ASSIGN (ADMIN)
+========================= */
+router.put("/assign/:id", verifyToken, checkRole(...ADMIN_ROLES), async (req, res) => {
   const { assigned_role, comment } = req.body;
   if (!assigned_role || !comment)
     return res.status(400).json({ error: "Comment required" });
@@ -118,55 +106,47 @@ router.put("/assign/:id", verifyToken, checkRole(...ADMIN), async (req, res) => 
   res.json({ success: true });
 });
 
-// OFFICE → ACCEPT COMPLAINT
+/* =========================
+   ACCEPT (OFFICE)
+========================= */
 router.put("/accept/:id", verifyToken, checkRole(...OFFICE_ROLES), async (req, res) => {
-  const { comment } = req.body;
-
-  if (!comment)
-    return res.status(400).json({ error: "Comment required" });
-
-  // 1️⃣ Update complaint status
-  await pool.query(
-    `UPDATE complaints
-     SET status = $1,
-         updated_at = NOW()
-     WHERE id = $2
-       AND assigned_role = $3`,
-    ["IN_PROGRESS", req.params.id, req.user.role] // ✅ ENUM
-  );
-
-  // 2️⃣ Insert comment (CORRECT ORDER)
-  await pool.query(
-    `INSERT INTO complaint_comments
-     (complaint_id, comment, commented_by, comment_type)
-     VALUES ($1,$2,$3,$4)`,
-    [
-      req.params.id,
-      comment,
-      req.user.id,      // ✅ INTEGER
-      "ACCEPT"          // ✅ ENUM
-    ]
-  );
-
-  res.json({ success: true });
-});
-
-/* =====================================================
-   RESOLVE (OFFICE)
-===================================================== */
-router.put("/resolve/:id", verifyToken, checkRole(...OFFICE), async (req, res) => {
   const { comment } = req.body;
   if (!comment) return res.status(400).json({ error: "Comment required" });
 
   await pool.query(
     `UPDATE complaints
-     SET status='PRESIDENT_REVIEW', updated_at=NOW()
-     WHERE id=$1`,
-    [req.params.id]
+     SET status='IN_PROGRESS', updated_at=NOW()
+     WHERE id=$1 AND assigned_role=$2`,
+    [req.params.id, req.user.role]
   );
 
   await pool.query(
     `INSERT INTO complaint_comments
+     (complaint_id, comment, commented_by, comment_type)
+     VALUES ($1,$2,$3,'ACCEPT')`,
+    [req.params.id, comment, req.user.id]
+  );
+
+  res.json({ success: true });
+});
+
+/* =========================
+   RESOLVE (OFFICE)
+========================= */
+router.put("/resolve/:id", verifyToken, checkRole(...OFFICE_ROLES), async (req, res) => {
+  const { comment } = req.body;
+  if (!comment) return res.status(400).json({ error: "Comment required" });
+
+  await pool.query(
+    `UPDATE complaints
+     SET status='RESOLVED', updated_at=NOW()
+     WHERE id=$1 AND assigned_role=$2`,
+    [req.params.id, req.user.role]
+  );
+
+  await pool.query(
+    `INSERT INTO complaint_comments
+     (complaint_id, comment, commented_by, comment_type)
      VALUES ($1,$2,$3,'RESOLVE')`,
     [req.params.id, comment, req.user.id]
   );
@@ -174,22 +154,23 @@ router.put("/resolve/:id", verifyToken, checkRole(...OFFICE), async (req, res) =
   res.json({ success: true });
 });
 
-/* =====================================================
+/* =========================
    CLOSE (PRESIDENT)
-===================================================== */
-router.put("/close/:id", verifyToken, checkRole("PRESIDENT"), async (req, res) => {
+========================= */
+router.put("/close/:id", verifyToken, checkRole(ROLES.PRESIDENT), async (req, res) => {
   const { comment } = req.body;
   if (!comment) return res.status(400).json({ error: "Comment required" });
 
   await pool.query(
     `UPDATE complaints
      SET status='CLOSED', updated_at=NOW()
-     WHERE id=$1`,
+     WHERE id=$1 AND status='RESOLVED'`,
     [req.params.id]
   );
 
   await pool.query(
     `INSERT INTO complaint_comments
+     (complaint_id, comment, commented_by, comment_type)
      VALUES ($1,$2,$3,'CLOSE')`,
     [req.params.id, comment, req.user.id]
   );
@@ -197,24 +178,23 @@ router.put("/close/:id", verifyToken, checkRole("PRESIDENT"), async (req, res) =
   res.json({ success: true });
 });
 
-/* =====================================================
+/* =========================
    REOPEN (MEMBER)
-===================================================== */
+========================= */
 router.put("/reopen/:id", verifyToken, async (req, res) => {
   const { comment } = req.body;
   if (!comment) return res.status(400).json({ error: "Comment required" });
 
   await pool.query(
     `UPDATE complaints
-     SET status='REOPENED',
-         sla_days=7,
-         updated_at=NOW()
+     SET status='OPEN', sla_days=7, updated_at=NOW()
      WHERE id=$1`,
     [req.params.id]
   );
 
   await pool.query(
     `INSERT INTO complaint_comments
+     (complaint_id, comment, commented_by, comment_type)
      VALUES ($1,$2,$3,'REOPEN')`,
     [req.params.id, comment, req.user.id]
   );
@@ -222,26 +202,26 @@ router.put("/reopen/:id", verifyToken, async (req, res) => {
   res.json({ success: true });
 });
 
-/* =====================================================
+/* =========================
    COMMENTS / TIMELINE
-===================================================== */
+========================= */
 router.get("/comments/:id", verifyToken, async (req, res) => {
   const { rows } = await pool.query(
     `SELECT cc.comment, cc.comment_type, cc.created_at,
             u.name, u.role
      FROM complaint_comments cc
-     JOIN users u ON u.id=cc.commented_by
+     JOIN users u ON u.id = cc.commented_by
      WHERE complaint_id=$1
-     ORDER BY created_at`,
+     ORDER BY cc.created_at`,
     [req.params.id]
   );
   res.json(rows);
 });
 
-/* =====================================================
-   DASHBOARD STATS (ADMIN)
-===================================================== */
-router.get("/stats", verifyToken, checkRole(...ADMIN), async (_, res) => {
+/* =========================
+   DASHBOARD STATS
+========================= */
+router.get("/stats", verifyToken, checkRole(...ADMIN_ROLES), async (_, res) => {
   const { rows } = await pool.query(`
     SELECT
       COUNT(*) FILTER (WHERE status='OPEN') open,
