@@ -106,6 +106,9 @@ app.use("/notifications", require("./routes/notifications"));
 app.use("/association", require("./routes/association"));
 app.use("/public", require("./routes/public"));
 
+// ASSOCIATION SETTINGS (CMS)
+app.use("/association-settings", require("./routes/associationSettings"));
+
 // EXPENSES
 app.use("/expenses", require("./routes/expenses"));
 
