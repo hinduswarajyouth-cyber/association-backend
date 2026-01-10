@@ -41,6 +41,7 @@ router.post("/donate", async (req, res) => {
     const {
       donor_name,
       donor_phone,
+      donor_email,
       fund_id,
       amount,
       payment_mode,
@@ -63,6 +64,7 @@ router.post("/donate", async (req, res) => {
       [
         donor_name || "Public Donor",
         donor_phone || null,
+        donor_email || null,
         fund_id,
         amount,
         payment_mode,
