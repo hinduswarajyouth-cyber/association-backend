@@ -130,6 +130,77 @@ router.get("/pdf/:receiptNo", verifyToken, async (req, res) => {
     const r = result.rows[0];
     const amountWords = amountToWords(r.amount);
 
+    /* =====================================================
+   🌍 PUBLIC PDF RECEIPT WITH QR
+===================================================== */
+router.get("/public-pdf/:receiptNo", async (req, res) => {
+  try {
+    const { receiptNo } = req.params;
+
+    const result = await pool.query(
+      `SELECT 
+          c.receipt_no,
+          c.amount,
+          c.receipt_date,
+          c.donor_name,
+          f.fund_name
+       FROM contributions c
+       JOIN funds f ON f.id = c.fund_id
+       WHERE c.receipt_no=$1
+         AND c.source='PUBLIC'
+         AND c.status='APPROVED'
+         AND c.qr_locked=true`,
+      [receiptNo]
+    );
+
+    if (!result.rowCount) {
+      return res.status(404).json({ error: "Receipt not found" });
+    }
+
+    const r = result.rows[0];
+    const amountWords = amountToWords(r.amount);
+    const verifyUrl = `${process.env.BASE_URL}/receipts/verify/${receiptNo}`;
+
+    const qrBuffer = Buffer.from(
+      (await QRCode.toDataURL(verifyUrl)).split(",")[1],
+      "base64"
+    );
+
+    res.setHeader("Content-Type", "application/pdf");
+    res.setHeader("Content-Disposition", `attachment; filename=${receiptNo}.pdf`);
+
+    const doc = new PDFDocument({ size: "A4", margin: 50 });
+    doc.pipe(res);
+
+    const logoPath = path.join(__dirname, "../assets/logo.png");
+    if (fs.existsSync(logoPath)) doc.image(logoPath, 50, 40, { width: 85 });
+
+    doc.font("Helvetica-Bold").fontSize(16).fillColor("#0d47a1")
+      .text("HINDUSWARAJ YOUTH WELFARE ASSOCIATION", 150, 50, { width: 420, align: "center" });
+
+    doc.moveDown(2).fontSize(14).fillColor("#c9a227")
+      .text("PUBLIC DONATION RECEIPT", { align: "center" });
+
+    doc.fontSize(11).fillColor("black");
+    doc.text(`Receipt No: ${r.receipt_no}`, 80, 200);
+    doc.text(`Donor: ${r.donor_name}`, 80, 225);
+    doc.text(`Fund: ${r.fund_name}`, 80, 250);
+    doc.text(`Amount: Rs. ${Number(r.amount).toFixed(2)}`, 80, 275);
+    doc.text(`In Words: ${amountWords}`, 80, 300);
+    doc.text(`Date: ${new Date(r.receipt_date).toDateString()}`, 80, 325);
+
+    doc.fontSize(10).fillColor("#0d47a1")
+      .text("Scan QR to verify receipt", 360, 200, { width: 160, align: "center" });
+
+    doc.image(qrBuffer, 380, 225, { width: 120 });
+
+    doc.end();
+  } catch (err) {
+    console.error(err);
+    res.status(500).send("Server error");
+  }
+});
+
     /* ===== FINAL QR URL (NO LOCALHOST) ===== */
     const verifyUrl = `${process.env.BASE_URL}/receipts/verify/${receiptNo}`;
 
