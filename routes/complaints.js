@@ -12,7 +12,30 @@ const OFFICE = [
   "JOINT_SECRETARY",
   "EC_MEMBER",
 ];
+/* =========================
+   ROLES
+========================= */
+const ROLES = {
+  SUPER_ADMIN: "SUPER_ADMIN",
+  PRESIDENT: "PRESIDENT",
+  VICE_PRESIDENT: "VICE_PRESIDENT",
+  GENERAL_SECRETARY: "GENERAL_SECRETARY",
+  JOINT_SECRETARY: "JOINT_SECRETARY",
+  EC_MEMBER: "EC_MEMBER",
+  MEMBER: "MEMBER",
+};
 
+const OFFICE_ROLES = [
+  ROLES.VICE_PRESIDENT,
+  ROLES.GENERAL_SECRETARY,
+  ROLES.JOINT_SECRETARY,
+  ROLES.EC_MEMBER,
+];
+
+const ADMIN_ROLES = [
+  ROLES.SUPER_ADMIN,
+  ROLES.PRESIDENT,
+];
 /* =====================================================
    CREATE COMPLAINT (ALL USERS)
 ===================================================== */
