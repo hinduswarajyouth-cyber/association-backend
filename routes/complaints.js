@@ -95,24 +95,34 @@ router.put("/assign/:id", verifyToken, checkRole(...ADMIN), async (req, res) => 
   res.json({ success: true });
 });
 
-/* =====================================================
-   ACCEPT (OFFICE)
-===================================================== */
-router.put("/accept/:id", verifyToken, checkRole(...OFFICE), async (req, res) => {
+// OFFICE → ACCEPT COMPLAINT
+router.put("/accept/:id", verifyToken, checkRole(...OFFICE_ROLES), async (req, res) => {
   const { comment } = req.body;
-  if (!comment) return res.status(400).json({ error: "Comment required" });
 
+  if (!comment)
+    return res.status(400).json({ error: "Comment required" });
+
+  // 1️⃣ Update complaint status
   await pool.query(
     `UPDATE complaints
-     SET status='IN_PROGRESS', updated_at=NOW()
-     WHERE id=$1 AND assigned_role=$2`,
-    [req.params.id, req.user.role]
+     SET status = $1,
+         updated_at = NOW()
+     WHERE id = $2
+       AND assigned_role = $3`,
+    ["IN_PROGRESS", req.params.id, req.user.role] // ✅ ENUM
   );
 
+  // 2️⃣ Insert comment (CORRECT ORDER)
   await pool.query(
     `INSERT INTO complaint_comments
-     VALUES ($1,$2,$3,'ACCEPT')`,
-    [req.params.id, comment, req.user.id]
+     (complaint_id, comment, commented_by, comment_type)
+     VALUES ($1,$2,$3,$4)`,
+    [
+      req.params.id,
+      comment,
+      req.user.id,      // ✅ INTEGER
+      "ACCEPT"          // ✅ ENUM
+    ]
   );
 
   res.json({ success: true });
