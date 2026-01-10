@@ -333,6 +333,7 @@ You may use it for your records, accounting, or audit purposes.
 <div style="background:#e8f5e9;padding:14px;border-radius:6px;margin:20px 0">
   <p style="font-family:Noto Sans Telugu,Arial">
     🔐 మీ రసీదును ధృవీకరించడానికి ఇక్కడ క్లిక్ చేయండి:
+    
   </p>
   <p style="text-align:center">
     <a href="${verifyUrl}"
