@@ -45,7 +45,7 @@ app.use(
       }
 
       // ❗ IMPORTANT: do NOT throw error
-      return callback(null, false);
+       return callback(null, true);
     },
     methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
     allowedHeaders: ["Content-Type", "Authorization"],
