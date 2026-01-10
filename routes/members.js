@@ -109,7 +109,36 @@ router.put(
   checkRole("SUPER_ADMIN", "PRESIDENT"),
   async (req, res) => {
     try {
-      const { name, personal_email, phone, address, role, active } = req.body;
+      const {
+        name,
+        personal_email,
+        phone,
+        address,
+        role,
+        active,
+      } = req.body;
+
+      const userId = Number(req.params.id);
+
+      /* 🚨 ENFORCE SINGLE VICE PRESIDENT */
+      if (role === "VICE_PRESIDENT") {
+        const checkVP = await pool.query(
+          `
+          SELECT id
+          FROM users
+          WHERE role = 'VICE_PRESIDENT'
+            AND id != $1
+            AND active = true
+          `,
+          [userId]
+        );
+
+        if (checkVP.rowCount > 0) {
+          return res.status(400).json({
+            error: "Only one Vice President is allowed",
+          });
+        }
+      }
 
       await pool.query(
         `
@@ -130,7 +159,7 @@ router.put(
           address,
           role,
           active,
-          req.params.id,
+          userId,
         ]
       );
 
