@@ -1,8 +1,6 @@
 const sendMail = require("./sendMail");
 const { publicDonationReceiptTemplate } = require("./emailTemplates");
-const PDFDocument = require("pdfkit");
-const QRCode = require("qrcode");
-const pool = require("../db");
+const generateReceiptPDF = require("./receiptPdf");
 
 module.exports = async function sendReceiptEmail(donation) {
   try {
@@ -17,52 +15,39 @@ module.exports = async function sendReceiptEmail(donation) {
 
     const verifyUrl = `${process.env.BASE_URL}/receipts/verify/${receipt_no}`;
 
-    // Generate QR
-    const qrBuffer = Buffer.from(
-      (await QRCode.toDataURL(verifyUrl)).split(",")[1],
-      "base64"
-    );
+    // Build receipt object for PDF
+    const receipt = {
+      receipt_no,
+      name: donor_name,
+      fund_name,
+      amount,
+      receipt_date,
+      verifyUrl,
+    };
 
-    // Generate PDF
-    const doc = new PDFDocument({ size: "A4", margin: 50 });
-    const buffers = [];
-    doc.on("data", buffers.push.bind(buffers));
-    doc.on("end", async () => {
-      const pdfData = Buffer.concat(buffers);
+    // 🔥 Generate SAME professional PDF used by member & public download
+    const pdfBuffer = await generateReceiptPDF(null, receipt, true);
 
-      const html = publicDonationReceiptTemplate({
-        name: donor_name,
-        receiptNo: receipt_no,
-        amount,
-        fund: fund_name,
-        date: new Date(receipt_date).toDateString(),
-        verifyUrl,
-      });
-
-      await sendMail(
-        donor_email,
-        "Your Donation Receipt – Hinduswaraj Youth Welfare Association",
-        html,
-        [
-          {
-            filename: `${receipt_no}.pdf`,
-            content: pdfData,
-          },
-        ]
-      );
+    const html = publicDonationReceiptTemplate({
+      name: donor_name,
+      receiptNo: receipt_no,
+      amount,
+      fund: fund_name,
+      date: new Date(receipt_date).toDateString(),
+      verifyUrl,
     });
 
-    doc.fontSize(16).text("HINDUSWARAJ YOUTH WELFARE ASSOCIATION", { align: "center" });
-    doc.moveDown();
-    doc.fontSize(12).text(`Receipt No: ${receipt_no}`);
-    doc.text(`Donor: ${donor_name}`);
-    doc.text(`Fund: ${fund_name}`);
-    doc.text(`Amount: ₹ ${Number(amount).toLocaleString("en-IN")}`);
-    doc.text(`Date: ${new Date(receipt_date).toDateString()}`);
-    doc.moveDown();
-    doc.image(qrBuffer, { width: 120 });
-
-    doc.end();
+    await sendMail(
+      donor_email,
+      "Your Donation Receipt – Hinduswaraj Youth Welfare Association",
+      html,
+      [
+        {
+          filename: `${receipt_no}.pdf`,
+          content: pdfBuffer,
+        },
+      ]
+    );
 
     return true;
   } catch (err) {

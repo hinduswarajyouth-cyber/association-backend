@@ -24,8 +24,10 @@ function amountToWords(num) {
 
 /* =========================
    📄 MAIN PDF GENERATOR
+   returnBuffer = true → Email
+   returnBuffer = false → Browser
 ========================= */
-module.exports = async function generateReceiptPDF(res, receipt) {
+module.exports = async function generateReceiptPDF(res, receipt, returnBuffer = false) {
   const {
     receipt_no,
     name,
@@ -41,14 +43,20 @@ module.exports = async function generateReceiptPDF(res, receipt) {
     "base64"
   );
 
-  res.setHeader("Content-Type", "application/pdf");
-  res.setHeader("Content-Disposition", `attachment; filename=${receipt_no}.pdf`);
-
   const doc = new PDFDocument({ size: "A4", margin: 50 });
-  doc.pipe(res);
+
+  // 🔥 Buffer support for email
+  let buffers = [];
+  if (returnBuffer) {
+    doc.on("data", buffers.push.bind(buffers));
+  } else {
+    res.setHeader("Content-Type", "application/pdf");
+    res.setHeader("Content-Disposition", `attachment; filename=${receipt_no}.pdf`);
+    doc.pipe(res);
+  }
 
   /* =========================
-     🅰 Load Unicode Font (Rs, Telugu, etc)
+     🅰 Unicode Font
   ========================= */
   const fontPath = path.join(__dirname, "../assets/NotoSans-Regular.ttf");
   if (fs.existsSync(fontPath)) {
@@ -57,7 +65,7 @@ module.exports = async function generateReceiptPDF(res, receipt) {
   }
 
   /* =========================
-     🖼 Asset paths
+     🖼 Assets
   ========================= */
   const logoPath = path.join(__dirname, "../assets/logo.png");
   const sealPath = path.join(__dirname, "../assets/seal.png");
@@ -96,8 +104,8 @@ module.exports = async function generateReceiptPDF(res, receipt) {
 
   let y = startY + 70;
   const drawRow = (label, value) => {
-    doc.font("Noto").text(label, 80, y);
-    doc.font("Noto").text(value, 260, y);
+    doc.text(label, 80, y);
+    doc.text(value, 260, y);
     y += 28;
   };
 
@@ -139,4 +147,11 @@ module.exports = async function generateReceiptPDF(res, receipt) {
   }
 
   doc.end();
+
+  // 🔥 Return buffer for email
+  if (returnBuffer) {
+    return new Promise(resolve => {
+      doc.on("end", () => resolve(Buffer.concat(buffers)));
+    });
+  }
 };
