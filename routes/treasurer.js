@@ -3,6 +3,7 @@ const router = express.Router();
 const pool = require("../db");
 const verifyToken = require("../middleware/verifyToken");
 const checkRole = require("../middleware/checkRole");
+const sendReceiptEmail = require("../utils/sendReceiptEmail");
 
 /* =====================================================
    📊 TREASURER SUMMARY
@@ -91,7 +92,8 @@ router.patch("/approve-member/:id",
         WHERE id=$2 AND source='MEMBER' AND status='PENDING'
       `,[req.user.id,id]);
 
-      if(!rowCount) return res.status(400).json({error:"Invalid or already processed"});
+      if(!rowCount)
+        return res.status(400).json({error:"Invalid or already processed"});
 
       res.json({message:"Member donation approved"});
     }catch(e){
@@ -100,7 +102,7 @@ router.patch("/approve-member/:id",
 });
 
 /* =====================================================
-   ✅ APPROVE PUBLIC
+   ✅ APPROVE PUBLIC (RECEIPT + EMAIL)
 ===================================================== */
 router.patch("/approve-public/:id",
   verifyToken,
@@ -109,19 +111,42 @@ router.patch("/approve-public/:id",
     try{
       const id = req.params.id;
 
-      const { rowCount } = await pool.query(`
+      const { rows } = await pool.query(`
         UPDATE contributions
         SET status='APPROVED',
             approved_by=$1,
-            approved_at=NOW()
+            approved_at=NOW(),
+            receipt_no = 'HYW-' || EXTRACT(YEAR FROM NOW()) || '-' || LPAD(id::text,6,'0'),
+            receipt_date = NOW(),
+            qr_locked = true
         WHERE id=$2 AND source='PUBLIC' AND status='PENDING'
+        RETURNING donor_email, donor_name, receipt_no, amount, fund_id, receipt_date
       `,[req.user.id,id]);
 
-      if(!rowCount) return res.status(400).json({error:"Invalid or already processed"});
+      if(!rows.length)
+        return res.status(400).json({error:"Invalid or already processed"});
 
-      res.json({message:"Public donation approved"});
+      const fund = await pool.query(
+        "SELECT fund_name FROM funds WHERE id=$1",
+        [rows[0].fund_id]
+      );
+
+      const donation = {
+        ...rows[0],
+        fund_name: fund.rows[0].fund_name
+      };
+
+      // 📧 Send QR-verified PDF receipt email
+      await sendReceiptEmail(donation);
+
+      res.json({
+        message:"Public donation approved and receipt emailed",
+        receipt: rows[0].receipt_no
+      });
+
     }catch(e){
-      res.status(500).json({error:e.message});
+      console.error("PUBLIC APPROVE ERROR 👉", e.message);
+      res.status(500).json({error:"Approve or email failed"});
     }
 });
 
