@@ -43,7 +43,7 @@ router.post(
         `
         INSERT INTO meetings
         (title, description, meeting_date, location, join_link, created_by)
-        VALUES ($1,$2,$3,$4,$5,$6)
+        VALUES ($1,$2, ($3::timestamp), $4,$5,$6)
         RETURNING *
         `,
         [
@@ -86,8 +86,11 @@ router.put(
       const { rows } = await pool.query(
         `
         UPDATE meetings
-        SET title=$1, description=$2, meeting_date=$3,
-            location=$4, join_link=$5
+        SET title=$1,
+            description=$2,
+            meeting_date=($3::timestamp),
+            location=$4,
+            join_link=$5
         WHERE id=$6
         RETURNING *
         `,
@@ -129,7 +132,6 @@ router.delete(
 
 /* ======================================================
    👥 JOIN MEETING (ALL ROLES)
-   ✅ DB SAFE (PRESENT only)
 ====================================================== */
 router.post("/join/:id", verifyToken, async (req, res) => {
   try {
@@ -256,8 +258,7 @@ async function finalizeResolution(resolutionId) {
     [resolutionId]
   );
 
-  let yes = 0,
-    no = 0;
+  let yes = 0, no = 0;
 
   votes.rows.forEach(v => {
     if (v.vote === "YES") yes = Number(v.c);
