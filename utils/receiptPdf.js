@@ -1,8 +1,30 @@
 const PDFDocument = require("pdfkit");
 const QRCode = require("qrcode");
-const fs = require("fs");
 const path = require("path");
+const fs = require("fs");
 
+/* =========================
+   🔢 AMOUNT TO WORDS
+========================= */
+function amountToWords(num) {
+  const a = ["", "One","Two","Three","Four","Five","Six","Seven","Eight","Nine",
+    "Ten","Eleven","Twelve","Thirteen","Fourteen","Fifteen","Sixteen","Seventeen","Eighteen","Nineteen"];
+  const b = ["", "", "Twenty","Thirty","Forty","Fifty","Sixty","Seventy","Eighty","Ninety"];
+
+  const inWords = (n) => {
+    if (n < 20) return a[n];
+    if (n < 100) return b[Math.floor(n / 10)] + (n % 10 ? " " + a[n % 10] : "");
+    if (n < 1000) return a[Math.floor(n / 100)] + " Hundred" + (n % 100 ? " " + inWords(n % 100) : "");
+    if (n < 100000) return inWords(Math.floor(n / 1000)) + " Thousand" + (n % 1000 ? " " + inWords(n % 1000) : "");
+    return "";
+  };
+
+  return inWords(Math.floor(num)) + " Rupees Only";
+}
+
+/* =========================
+   📄 MAIN PDF GENERATOR
+========================= */
 module.exports = async function generateReceiptPDF(res, receipt) {
   const {
     receipt_no,
@@ -10,9 +32,10 @@ module.exports = async function generateReceiptPDF(res, receipt) {
     fund_name,
     amount,
     receipt_date,
-    verifyUrl,
+    verifyUrl
   } = receipt;
 
+  // Generate QR
   const qrBuffer = Buffer.from(
     (await QRCode.toDataURL(verifyUrl)).split(",")[1],
     "base64"
@@ -24,16 +47,27 @@ module.exports = async function generateReceiptPDF(res, receipt) {
   const doc = new PDFDocument({ size: "A4", margin: 50 });
   doc.pipe(res);
 
-  // ✅ Load Unicode font (fixes ₹ symbol)
+  /* =========================
+     🅰 Load Unicode Font (Rs, Telugu, etc)
+  ========================= */
   const fontPath = path.join(__dirname, "../assets/NotoSans-Regular.ttf");
-  doc.registerFont("Noto", fontPath);
-  doc.font("Noto");
+  if (fs.existsSync(fontPath)) {
+    doc.registerFont("Noto", fontPath);
+    doc.font("Noto");
+  }
 
-  const logo = path.join(__dirname, "../assets/logo.jpeg");
-  const seal = path.join(__dirname, "../assets/seal.png");
+  /* =========================
+     🖼 Asset paths
+  ========================= */
+  const logoPath = path.join(__dirname, "../assets/logo.png");
+  const sealPath = path.join(__dirname, "../assets/seal.png");
 
-  /* ===== HEADER ===== */
-  if (fs.existsSync(logo)) doc.image(logo, 50, 30, { width: 90 });
+  /* =========================
+     🧾 HEADER
+  ========================= */
+  if (fs.existsSync(logoPath)) {
+    doc.image(logoPath, 50, 30, { width: 90 });
+  }
 
   doc
     .fontSize(16)
@@ -47,8 +81,10 @@ module.exports = async function generateReceiptPDF(res, receipt) {
     .text("Reg No: 784/25 | Ph: 8499878425", 150, 80, { align: "center" })
     .text("hinduswarajyouth@gmail.com", 150, 95, { align: "center" });
 
-  /* ===== MAIN BOX ===== */
-  const startY = 130;
+  /* =========================
+     📦 MAIN BOX
+  ========================= */
+  const startY = 140;
   doc.rect(40, startY, 520, 430).stroke();
 
   doc
@@ -56,30 +92,25 @@ module.exports = async function generateReceiptPDF(res, receipt) {
     .fillColor("#c9a227")
     .text("OFFICIAL DONATION RECEIPT", 0, startY + 15, { align: "center" });
 
+  doc.fontSize(11).fillColor("black");
+
   let y = startY + 70;
-
-  const row = (label, value, right = false) => {
-    doc
-      .fontSize(11)
-      .fillColor("black")
-      .text(label, 80, y, { width: 160 });
-
-    doc.text(value, 260, y, {
-      width: 260,
-      align: right ? "right" : "left",
-    });
-
+  const drawRow = (label, value) => {
+    doc.font("Noto").text(label, 80, y);
+    doc.font("Noto").text(value, 260, y);
     y += 28;
   };
 
-  row("Receipt No", receipt_no);
-  row("Member / Donor", name);
-  row("Fund", fund_name);
-  row("Amount Paid", `₹ ${Number(amount).toLocaleString("en-IN")}`, true);
-  row("Amount in Words", amountToWords(amount));
-  row("Receipt Date", new Date(receipt_date).toDateString());
+  drawRow("Receipt No", receipt_no);
+  drawRow("Donor / Member", name);
+  drawRow("Fund", fund_name);
+  drawRow("Amount Paid", `Rs. ${Number(amount).toLocaleString("en-IN")}`);
+  drawRow("Amount in Words", amountToWords(amount));
+  drawRow("Receipt Date", new Date(receipt_date).toDateString());
 
-  /* ===== QR ===== */
+  /* =========================
+     📱 QR
+  ========================= */
   doc
     .fontSize(10)
     .fillColor("#0d47a1")
@@ -87,7 +118,9 @@ module.exports = async function generateReceiptPDF(res, receipt) {
 
   doc.image(qrBuffer, 390, startY + 120, { width: 120 });
 
-  /* ===== FOOTER ===== */
+  /* =========================
+     📝 FOOTER
+  ========================= */
   doc
     .fontSize(9)
     .fillColor("gray")
@@ -98,29 +131,12 @@ module.exports = async function generateReceiptPDF(res, receipt) {
       { align: "center" }
     );
 
-  /* ===== GOLDEN SEAL ===== */
-  if (fs.existsSync(seal)) {
-    doc.image(seal, 240, startY + 365, { width: 120 });
+  /* =========================
+     🏅 SEAL
+  ========================= */
+  if (fs.existsSync(sealPath)) {
+    doc.image(sealPath, 240, startY + 365, { width: 120 });
   }
 
   doc.end();
 };
-
-/* ===== AMOUNT TO WORDS ===== */
-function amountToWords(num) {
-  const a = ["", "One","Two","Three","Four","Five","Six","Seven","Eight","Nine",
-    "Ten","Eleven","Twelve","Thirteen","Fourteen","Fifteen","Sixteen","Seventeen","Eighteen","Nineteen"];
-  const b = ["", "", "Twenty","Thirty","Forty","Fifty","Sixty","Seventy","Eighty","Ninety"];
-
-  const inWords = (n) => {
-    if (n < 20) return a[n];
-    if (n < 100) return b[Math.floor(n / 10)] + (n % 10 ? " " + a[n % 10] : "");
-    if (n < 1000)
-      return a[Math.floor(n / 100)] + " Hundred" + (n % 100 ? " " + inWords(n % 100) : "");
-    if (n < 100000)
-      return inWords(Math.floor(n / 1000)) + " Thousand" + (n % 1000 ? " " + inWords(n % 1000) : "");
-    return "";
-  };
-
-  return inWords(Math.floor(num)) + " Rupees Only";
-}
