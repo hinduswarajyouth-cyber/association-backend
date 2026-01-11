@@ -3,29 +3,15 @@ const QRCode = require("qrcode");
 const fs = require("fs");
 const path = require("path");
 
-/* ===== Indian Rupee Unicode Font ===== */
-const fontPath = path.join(__dirname, "../assets/NotoSans-Regular.ttf");
-
-function amountToWords(num) {
-  const a = ["", "One","Two","Three","Four","Five","Six","Seven","Eight","Nine",
-    "Ten","Eleven","Twelve","Thirteen","Fourteen","Fifteen","Sixteen","Seventeen","Eighteen","Nineteen"];
-  const b = ["", "", "Twenty","Thirty","Forty","Fifty","Sixty","Seventy","Eighty","Ninety"];
-
-  const inWords = (n) => {
-    if (n < 20) return a[n];
-    if (n < 100) return b[Math.floor(n / 10)] + (n % 10 ? " " + a[n % 10] : "");
-    if (n < 1000)
-      return a[Math.floor(n / 100)] + " Hundred" + (n % 100 ? " " + inWords(n % 100) : "");
-    if (n < 100000)
-      return inWords(Math.floor(n / 1000)) + " Thousand" + (n % 1000 ? " " + inWords(n % 1000) : "");
-    return "";
-  };
-
-  return inWords(Math.floor(num)) + " Rupees Only";
-}
-
 module.exports = async function generateReceiptPDF(res, receipt) {
-  const { receipt_no, name, fund_name, amount, receipt_date, verifyUrl } = receipt;
+  const {
+    receipt_no,
+    name,
+    fund_name,
+    amount,
+    receipt_date,
+    verifyUrl,
+  } = receipt;
 
   const qrBuffer = Buffer.from(
     (await QRCode.toDataURL(verifyUrl)).split(",")[1],
@@ -38,11 +24,10 @@ module.exports = async function generateReceiptPDF(res, receipt) {
   const doc = new PDFDocument({ size: "A4", margin: 50 });
   doc.pipe(res);
 
-  /* ===== Register Unicode Font ===== */
-  if (fs.existsSync(fontPath)) {
-    doc.registerFont("Noto", fontPath);
-    doc.font("Noto");
-  }
+  // ✅ Load Unicode font (fixes ₹ symbol)
+  const fontPath = path.join(__dirname, "../assets/NotoSans-Regular.ttf");
+  doc.registerFont("Noto", fontPath);
+  doc.font("Noto");
 
   const logo = path.join(__dirname, "../assets/logo.jpeg");
   const seal = path.join(__dirname, "../assets/seal.png");
@@ -74,18 +59,21 @@ module.exports = async function generateReceiptPDF(res, receipt) {
   let y = startY + 70;
 
   const row = (label, value, right = false) => {
-    doc.fontSize(11).fillColor("black").text(label, 80, y, { width: 160 });
+    doc
+      .fontSize(11)
+      .fillColor("black")
+      .text(label, 80, y, { width: 160 });
 
-    if (right) {
-      doc.text(value, 260, y, { width: 260, align: "right" });
-    } else {
-      doc.text(value, 260, y, { width: 260 });
-    }
+    doc.text(value, 260, y, {
+      width: 260,
+      align: right ? "right" : "left",
+    });
+
     y += 28;
   };
 
   row("Receipt No", receipt_no);
-  row("Donor / Member", name);
+  row("Member / Donor", name);
   row("Fund", fund_name);
   row("Amount Paid", `₹ ${Number(amount).toLocaleString("en-IN")}`, true);
   row("Amount in Words", amountToWords(amount));
@@ -110,8 +98,29 @@ module.exports = async function generateReceiptPDF(res, receipt) {
       { align: "center" }
     );
 
-  /* ===== GOLD SEAL ===== */
-  if (fs.existsSync(seal)) doc.image(seal, 240, startY + 365, { width: 120 });
+  /* ===== GOLDEN SEAL ===== */
+  if (fs.existsSync(seal)) {
+    doc.image(seal, 240, startY + 365, { width: 120 });
+  }
 
   doc.end();
 };
+
+/* ===== AMOUNT TO WORDS ===== */
+function amountToWords(num) {
+  const a = ["", "One","Two","Three","Four","Five","Six","Seven","Eight","Nine",
+    "Ten","Eleven","Twelve","Thirteen","Fourteen","Fifteen","Sixteen","Seventeen","Eighteen","Nineteen"];
+  const b = ["", "", "Twenty","Thirty","Forty","Fifty","Sixty","Seventy","Eighty","Ninety"];
+
+  const inWords = (n) => {
+    if (n < 20) return a[n];
+    if (n < 100) return b[Math.floor(n / 10)] + (n % 10 ? " " + a[n % 10] : "");
+    if (n < 1000)
+      return a[Math.floor(n / 100)] + " Hundred" + (n % 100 ? " " + inWords(n % 100) : "");
+    if (n < 100000)
+      return inWords(Math.floor(n / 1000)) + " Thousand" + (n % 1000 ? " " + inWords(n % 1000) : "");
+    return "";
+  };
+
+  return inWords(Math.floor(num)) + " Rupees Only";
+}
