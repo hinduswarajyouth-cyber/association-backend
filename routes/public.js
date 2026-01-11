@@ -58,8 +58,8 @@ router.post("/donate", async (req, res) => {
     await pool.query(
       `
       INSERT INTO contributions
-      (member_id, donor_name, donor_phone, fund_id, amount, payment_mode, reference_no, status)
-      VALUES (NULL, $1, $2, $3, $4, $5, $6, 'PENDING')
+      (member_id, donor_name, donor_phone, donor_email, fund_id, amount, payment_mode, reference_no, status)
+      VALUES (NULL, $1, $2, $3, $4, $5, $6, $7, 'PENDING')
       `,
       [
         donor_name || "Public Donor",
