@@ -1,54 +1,74 @@
-const express = require("express");
-const router = express.Router();
-const pool = require("../db");
-const verifyToken = require("../middleware/verifyToken");
-const generateReceiptPDF = require("../utils/receiptPdf");
+async function generatePdf(res, r, receiptNo) {
+  const verifyUrl = `${process.env.BASE_URL}/receipts/verify/${receiptNo}`;
+  const qr = Buffer.from(
+    (await QRCode.toDataURL(verifyUrl)).split(",")[1],
+    "base64"
+  );
 
-/* =====================================================
-   🧾 DOWNLOAD CONTRIBUTION RECEIPT (PDF)
-   GET /contributions/receipt/:id
-===================================================== */
-router.get("/receipt/:id", verifyToken, async (req, res) => {
-  try {
-    const contributionId = Number(req.params.id);
+  res.setHeader("Content-Type", "application/pdf");
+  res.setHeader("Content-Disposition", `attachment; filename=${receiptNo}.pdf`);
 
-    const result = await pool.query(
-      `
-      SELECT 
-        c.id,
-        c.receipt_no,
-        c.amount,
-        c.receipt_date,
-        c.member_id,
-        u.name AS member_name,
-        f.fund_name
-      FROM contributions c
-      JOIN users u ON u.id = c.member_id
-      JOIN funds f ON f.id = c.fund_id
-      WHERE c.id = $1
-      `,
-      [contributionId]
-    );
+  const doc = new PDFDocument({ size: "A4", margin: 50 });
+  doc.pipe(res);
 
-    if (!result.rows.length) {
-      return res.status(404).json({ error: "Receipt not found" });
-    }
+  const logo = path.join(__dirname, "../assets/logo.jpeg");
+  const seal = path.join(__dirname, "../assets/seal.png");
 
-    const receipt = result.rows[0];
+  /* ===== HEADER ===== */
+  if (fs.existsSync(logo)) doc.image(logo, 50, 30, { width: 90 });
 
-    // 🔐 MEMBER CAN DOWNLOAD ONLY HIS RECEIPT
-    if (
-      req.user.role === "MEMBER" &&
-      receipt.member_id !== req.user.id
-    ) {
-      return res.status(403).json({ error: "Access denied" });
-    }
+  doc
+    .font("Helvetica-Bold")
+    .fontSize(16)
+    .fillColor("#0d47a1")
+    .text("HINDUSWARAJ YOUTH WELFARE ASSOCIATION", 150, 40, { align: "center" });
 
-    generateReceiptPDF(res, receipt);
-  } catch (err) {
-    console.error("RECEIPT PDF ERROR 👉", err.message);
-    res.status(500).json({ error: "Failed to generate receipt" });
-  }
-});
+  doc
+    .fontSize(10)
+    .fillColor("black")
+    .text("Aravind Nagar, Jagtial – 505327", 150, 65, { align: "center" })
+    .text("Reg No: 784/25 | Ph: 8499878425", 150, 80, { align: "center" });
 
-module.exports = router;
+  /* ===== MAIN BOX ===== */
+  const startY = 130;
+  doc.rect(40, startY, 520, 430).stroke();
+
+  doc
+    .font("Helvetica-Bold")
+    .fontSize(14)
+    .fillColor("#c9a227")
+    .text("OFFICIAL DONATION RECEIPT", 0, startY + 15, { align: "center" });
+
+  let y = startY + 70;
+  const draw = (l, v) => {
+    doc.font("Helvetica-Bold").text(l, 80, y);
+    doc.font("Helvetica").text(v, 260, y);
+    y += 28;
+  };
+
+  draw("Receipt No", r.receipt_no);
+  draw("Donor / Member", r.donor_name);
+  draw("Fund", r.fund_name);
+  draw("Amount", `₹ ${Number(r.amount).toLocaleString("en-IN")}`);
+  draw("Amount in Words", amountToWords(r.amount));
+  draw("Date", new Date(r.receipt_date).toDateString());
+
+  /* ===== QR ===== */
+  doc
+    .fontSize(10)
+    .fillColor("#0d47a1")
+    .text("Scan QR to verify receipt", 360, startY + 90, { align: "center" });
+
+  doc.image(qr, 390, startY + 120, { width: 120 });
+
+  /* ===== FOOTER ===== */
+  doc
+    .fontSize(9)
+    .fillColor("gray")
+    .text("This is a system generated receipt. No signature required.", 0, startY + 350, { align: "center" });
+
+  /* ===== SEAL ===== */
+  if (fs.existsSync(seal)) doc.image(seal, 240, startY + 365, { width: 120 });
+
+  doc.end();
+}
