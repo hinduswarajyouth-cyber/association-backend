@@ -1,12 +1,9 @@
 const express = require("express");
 const router = express.Router();
 const pool = require("../db");
-const PDFDocument = require("pdfkit");
-const QRCode = require("qrcode");
-const path = require("path");
-const fs = require("fs");
 const verifyToken = require("../middleware/verifyToken");
 const rateLimit = require("express-rate-limit");
+const generateReceiptPDF = require("../utils/receiptPdf");
 
 /* =========================
    🔐 RATE LIMIT
@@ -17,118 +14,128 @@ const verifyLimiter = rateLimit({
 });
 
 /* =========================
-   🔢 AMOUNT TO WORDS
-========================= */
-function amountToWords(num) {
-  const a = ["", "One","Two","Three","Four","Five","Six","Seven","Eight","Nine",
-    "Ten","Eleven","Twelve","Thirteen","Fourteen","Fifteen","Sixteen","Seventeen","Eighteen","Nineteen"];
-  const b = ["", "", "Twenty","Thirty","Forty","Fifty","Sixty","Seventy","Eighty","Ninety"];
-
-  const inWords = (n) => {
-    if (n < 20) return a[n];
-    if (n < 100) return b[Math.floor(n / 10)] + (n % 10 ? " " + a[n % 10] : "");
-    if (n < 1000) return a[Math.floor(n / 100)] + " Hundred" + (n % 100 ? " " + inWords(n % 100) : "");
-    if (n < 100000) return inWords(Math.floor(n / 1000)) + " Thousand" + (n % 1000 ? " " + inWords(n % 1000) : "");
-    return "";
-  };
-
-  return inWords(Math.floor(num)) + " Rupees Only";
-}
-
-/* =========================
-   🌐 VERIFY (QR)
+   🌐 QR VERIFICATION PAGE
 ========================= */
 router.get("/verify/:receiptNo", verifyLimiter, async (req, res) => {
-  const { receiptNo } = req.params;
+  try {
+    const { receiptNo } = req.params;
 
-  const { rows } = await pool.query(
-    `SELECT c.receipt_no, c.amount, c.receipt_date,
-            COALESCE(u.name,c.donor_name) AS name, f.fund_name
-     FROM contributions c
-     LEFT JOIN users u ON u.id=c.member_id
-     JOIN funds f ON f.id=c.fund_id
-     WHERE c.receipt_no=$1 AND c.status='APPROVED' AND c.qr_locked=true`,
-    [receiptNo]
-  );
+    const { rows } = await pool.query(
+      `SELECT c.receipt_no, c.amount, c.receipt_date,
+              COALESCE(u.name, c.donor_name) AS name,
+              f.fund_name
+       FROM contributions c
+       LEFT JOIN users u ON u.id = c.member_id
+       JOIN funds f ON f.id = c.fund_id
+       WHERE c.receipt_no=$1
+         AND c.status='APPROVED'
+         AND c.qr_locked=true`,
+      [receiptNo]
+    );
 
-  if (!rows.length) return res.send("<h2>❌ Invalid Receipt</h2>");
+    if (!rows.length) {
+      return res.send("<h2>❌ Invalid or Unapproved Receipt</h2>");
+    }
 
-  const r = rows[0];
-  res.send(`<h2>✅ Receipt Verified</h2>
-    <p>${r.receipt_no}</p>
-    <p>${r.name}</p>
-    <p>${r.fund_name}</p>
-    <p>₹${r.amount}</p>
-  `);
+    const r = rows[0];
+
+    res.send(`
+      <h2>✅ Receipt Verified</h2>
+      <p><b>Receipt:</b> ${r.receipt_no}</p>
+      <p><b>Name:</b> ${r.name}</p>
+      <p><b>Fund:</b> ${r.fund_name}</p>
+      <p><b>Amount:</b> ₹${Number(r.amount).toLocaleString("en-IN")}</p>
+      <p><b>Date:</b> ${new Date(r.receipt_date).toDateString()}</p>
+    `);
+  } catch (err) {
+    console.error(err);
+    res.status(500).send("Server error");
+  }
 });
 
 /* =========================
-   🌍 PUBLIC PDF
+   🌍 PUBLIC PDF RECEIPT
 ========================= */
 router.get("/public-pdf/:receiptNo", async (req, res) => {
-  const { receiptNo } = req.params;
+  try {
+    const { receiptNo } = req.params;
 
-  const { rows } = await pool.query(
-    `SELECT c.receipt_no,c.amount,c.receipt_date,c.donor_name,f.fund_name
-     FROM contributions c
-     JOIN funds f ON f.id=c.fund_id
-     WHERE c.receipt_no=$1 AND c.source='PUBLIC' AND c.status='APPROVED' AND c.qr_locked=true`,
-    [receiptNo]
-  );
+    const { rows } = await pool.query(
+      `SELECT c.receipt_no, c.amount, c.receipt_date,
+              c.donor_name, f.fund_name
+       FROM contributions c
+       JOIN funds f ON f.id = c.fund_id
+       WHERE c.receipt_no=$1
+         AND c.source='PUBLIC'
+         AND c.status='APPROVED'
+         AND c.qr_locked=true`,
+      [receiptNo]
+    );
 
-  if (!rows.length) return res.status(404).send("Not found");
+    if (!rows.length) return res.status(404).send("Receipt not found");
 
-  await generatePdf(res, rows[0], receiptNo);
+    const r = rows[0];
+
+    const receipt = {
+      receipt_no: r.receipt_no,
+      name: r.donor_name,
+      fund_name: r.fund_name,
+      amount: r.amount,
+      receipt_date: r.receipt_date,
+      verifyUrl: `${process.env.BASE_URL}/receipts/verify/${r.receipt_no}`,
+    };
+
+    // 🔥 PROFESSIONAL PDF
+    generateReceiptPDF(res, receipt);
+  } catch (err) {
+    console.error(err);
+    res.status(500).send("Server error");
+  }
 });
 
 /* =========================
-   👤 MEMBER PDF
+   👤 MEMBER PDF RECEIPT
 ========================= */
 router.get("/pdf/:receiptNo", verifyToken, async (req, res) => {
-  const { receiptNo } = req.params;
+  try {
+    const { receiptNo } = req.params;
 
-  const { rows } = await pool.query(
-    `SELECT c.receipt_no,c.amount,c.receipt_date,u.name AS donor_name,f.fund_name
-     FROM contributions c
-     JOIN users u ON u.id=c.member_id
-     JOIN funds f ON f.id=c.fund_id
-     WHERE c.receipt_no=$1 AND c.member_id=$2 AND c.status='APPROVED' AND c.qr_locked=true`,
-    [receiptNo, req.user.id]
-  );
+    const { rows } = await pool.query(
+      `SELECT c.receipt_no, c.amount, c.receipt_date,
+              u.name AS donor_name, f.fund_name, c.member_id
+       FROM contributions c
+       JOIN users u ON u.id = c.member_id
+       JOIN funds f ON f.id = c.fund_id
+       WHERE c.receipt_no=$1
+         AND c.status='APPROVED'
+         AND c.qr_locked=true`,
+      [receiptNo]
+    );
 
-  if (!rows.length) return res.status(404).send("Not found");
+    if (!rows.length) return res.status(404).send("Receipt not found");
 
-  await generatePdf(res, rows[0], receiptNo);
+    const r = rows[0];
+
+    // 🔐 Member can download only his receipt
+    if (req.user.role === "MEMBER" && r.member_id !== req.user.id) {
+      return res.status(403).send("Access denied");
+    }
+
+    const receipt = {
+      receipt_no: r.receipt_no,
+      name: r.donor_name,
+      fund_name: r.fund_name,
+      amount: r.amount,
+      receipt_date: r.receipt_date,
+      verifyUrl: `${process.env.BASE_URL}/receipts/verify/${r.receipt_no}`,
+    };
+
+    // 🔥 SAME PROFESSIONAL PDF
+    generateReceiptPDF(res, receipt);
+  } catch (err) {
+    console.error(err);
+    res.status(500).send("Server error");
+  }
 });
-
-/* =========================
-   📄 PDF GENERATOR (USED BY BOTH)
-========================= */
-async function generatePdf(res, r, receiptNo) {
-  const verifyUrl = `${process.env.BASE_URL}/receipts/verify/${receiptNo}`;
-  const qr = Buffer.from((await QRCode.toDataURL(verifyUrl)).split(",")[1], "base64");
-
-  res.setHeader("Content-Type", "application/pdf");
-  res.setHeader("Content-Disposition", `attachment; filename=${receiptNo}.pdf`);
-
-  const doc = new PDFDocument({ size: "A4", margin: 50 });
-  doc.pipe(res);
-
-  const logoPath = path.join(__dirname, "../assets/logo.png");
-  if (fs.existsSync(logoPath)) doc.image(logoPath, 50, 40, { width: 80 });
-
-  doc.fontSize(16).text("Hinduswaraj Youth Welfare Association", { align: "center" });
-  doc.moveDown();
-  doc.text(`Receipt No: ${r.receipt_no}`);
-  doc.text(`Name: ${r.donor_name}`);
-  doc.text(`Fund: ${r.fund_name}`);
-  doc.text(`Amount: ₹${r.amount}`);
-  doc.text(`In Words: ${amountToWords(r.amount)}`);
-  doc.text(`Date: ${new Date(r.receipt_date).toDateString()}`);
-  doc.image(qr, 400, 200, { width: 120 });
-  doc.text("Scan QR to verify", 400, 330);
-
-  doc.end();
-}
 
 module.exports = router;
