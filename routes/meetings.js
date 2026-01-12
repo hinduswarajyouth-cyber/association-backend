@@ -42,8 +42,8 @@ router.post(
       const { rows } = await pool.query(
         `
         INSERT INTO meetings
-        (title, description, meeting_date, location, join_link, created_by)
-        VALUES ($1,$2, ($3::timestamp), $4,$5,$6)
+(title, description, meeting_date, location, join_link, created_by)
+VALUES ($1,$2, ($3::timestamptz AT TIME ZONE 'Asia/Kolkata'), $4,$5,$6)
         RETURNING *
         `,
         [
@@ -88,7 +88,7 @@ router.put(
         UPDATE meetings
         SET title=$1,
             description=$2,
-            meeting_date=($3::timestamp),
+            meeting_date = ($3::timestamptz AT TIME ZONE 'Asia/Kolkata')
             location=$4,
             join_link=$5
         WHERE id=$6
