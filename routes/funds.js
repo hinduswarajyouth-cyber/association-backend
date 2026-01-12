@@ -148,6 +148,43 @@ router.get("/list", verifyToken, async (req, res) => {
 });
 
 /* =====================================================
+   🗑️ DELETE FUND (SUPER_ADMIN – HARD DELETE)
+===================================================== */
+router.delete(
+  "/:id",
+  verifyToken,
+  checkRole("SUPER_ADMIN"),
+  async (req, res) => {
+    try {
+      const fundId = req.params.id;
+
+      // Remove all ledger entries first
+      await pool.query("DELETE FROM ledger WHERE fund_id = $1", [fundId]);
+
+      // Remove all contributions linked to this fund
+      await pool.query("DELETE FROM contributions WHERE fund_id = $1", [fundId]);
+
+      // Now delete the fund
+      const result = await pool.query(
+        "DELETE FROM funds WHERE id = $1 RETURNING *",
+        [fundId]
+      );
+
+      if (!result.rowCount) {
+        return res.status(404).json({ error: "Fund not found" });
+      }
+
+      await logAudit("DELETE", "FUND", fundId, req.user.id);
+
+      res.json({ message: "Fund deleted permanently" });
+    } catch (err) {
+      console.error("DELETE FUND ERROR 👉", err.message);
+      res.status(500).json({ error: "Server error" });
+    }
+  }
+);
+
+/* =====================================================
    💰 CREATE CONTRIBUTION (ALL ROLES)
    ✔ Approval via treasurer.js
 ===================================================== */
