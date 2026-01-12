@@ -8,12 +8,76 @@ const { generateResolutionPDF } = require("../utils/generateResolutionPDF");
 const router = express.Router();
 
 const ADMIN_ROLES = ["SUPER_ADMIN", "PRESIDENT"];
+/* ======================================================
+   📝 AGENDA SYSTEM
+====================================================== */
+/* ======================================================
+   📥 GET AGENDA (ALL USERS)
+====================================================== */
+router.get("/agenda/:id", verifyToken, async (req, res) => {
+  try {
+    const r = await pool.query(
+      "SELECT agenda, agenda_locked FROM meetings WHERE id=$1",
+      [req.params.id]
+    );
+
+    res.json(r.rows[0] || {});
+  } catch (err) {
+    console.error("GET AGENDA ERROR:", err.message);
+    res.status(500).json({ error: "Failed to fetch agenda" });
+  }
+});
+/* ======================================================
+   💾 SAVE AGENDA (ONLY BEFORE MEETING STARTS)
+====================================================== */
+router.post(
+  "/agenda/:id",
+  verifyToken,
+  checkRole(...ADMIN_ROLES),
+  async (req, res) => {
+    try {
+      const m = await pool.query(
+        "SELECT meeting_date, agenda_locked FROM meetings WHERE id=$1",
+        [req.params.id]
+      );
+
+      if (!m.rows.length)
+        return res.status(404).json({ error: "Meeting not found" });
+
+      if (
+        m.rows[0].agenda_locked ||
+        new Date() > new Date(m.rows[0].meeting_date)
+      ) {
+        return res
+          .status(403)
+          .json({ error: "Agenda locked. Meeting already started." });
+      }
+
+      await pool.query(
+        "UPDATE meetings SET agenda=$1 WHERE id=$2",
+        [req.body.agenda, req.params.id]
+      );
+
+      res.json({ success: true });
+    } catch (err) {
+      console.error("SAVE AGENDA ERROR:", err.message);
+      res.status(500).json({ error: "Failed to save agenda" });
+    }
+  }
+);
 
 /* ======================================================
    📅 GET ALL MEETINGS (ALL USERS)
 ====================================================== */
 router.get("/", verifyToken, async (req, res) => {
   try {
+    // 🔒 Auto-lock agendas when meeting starts
+    await pool.query(`
+      UPDATE meetings 
+      SET agenda_locked=true 
+      WHERE meeting_date < NOW() AND agenda_locked=false
+    `);
+
     const { rows } = await pool.query(
       "SELECT * FROM meetings ORDER BY meeting_date DESC"
     );
@@ -243,6 +307,28 @@ router.post("/vote/:rid", verifyToken, async (req, res) => {
     res.status(500).json({ error: "Vote failed" });
   }
 });
+/* ======================================================
+   🧾 WHO VOTED (YES / NO)
+====================================================== */
+router.get("/votes/:rid", verifyToken, async (req, res) => {
+  try {
+    const { rows } = await pool.query(
+      `
+      SELECT u.name, v.vote
+      FROM meeting_votes v
+      JOIN users u ON u.id = v.user_id
+      WHERE v.resolution_id = $1
+      ORDER BY u.name
+      `,
+      [req.params.rid]
+    );
+
+    res.json(rows);
+  } catch (err) {
+    console.error("GET VOTES ERROR:", err.message);
+    res.status(500).json({ error: "Failed to load votes" });
+  }
+});
 
 /* ======================================================
    🔒 FINALIZE RESOLUTION
@@ -288,5 +374,43 @@ async function finalizeResolution(resolutionId) {
     );
   }
 }
+/* ======================================================
+   📜 GENERATE MINUTES OF MEETING PDF
+====================================================== */
+router.post("/minutes-pdf/:meetingId", verifyToken, checkRole(...ADMIN_ROLES), async (req, res) => {
+  try {
+    const { meetingId } = req.params;
+
+    const meeting = await pool.query(
+      "SELECT * FROM meetings WHERE id=$1",
+      [meetingId]
+    );
+
+    const resolutions = await pool.query(
+      "SELECT * FROM meeting_resolutions WHERE meeting_id=$1",
+      [meetingId]
+    );
+
+    const votes = await pool.query(`
+      SELECT r.id, r.title, u.name, v.vote
+      FROM meeting_resolutions r
+      LEFT JOIN meeting_votes v ON r.id = v.resolution_id
+      LEFT JOIN users u ON u.id = v.user_id
+      WHERE r.meeting_id = $1
+      ORDER BY r.id
+    `, [meetingId]);
+
+    const pdfPath = await generateMinutesPDF(
+      meeting.rows[0],
+      resolutions.rows,
+      votes.rows
+    );
+
+    res.json({ pdf: pdfPath });
+  } catch (err) {
+    console.error("MINUTES PDF ERROR:", err.message);
+    res.status(500).json({ error: "Failed to generate minutes" });
+  }
+});
 
 module.exports = router;
