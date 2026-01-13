@@ -103,7 +103,7 @@ router.get("/", verifyToken, async (req, res) => {
 UPDATE meetings
 SET agenda_locked = true
 WHERE 
-  meeting_date + INTERVAL '15 minutes' < NOW()
+  meeting_date + INTERVAL '15 minutes' < NOW();
   AND agenda_locked = false;
 `);
 
@@ -340,6 +340,27 @@ router.post("/vote/:rid", verifyToken, async (req, res) => {
       [req.params.rid]
     );
 
+    const roleCheck = await pool.query(
+  `
+  SELECT role FROM users WHERE id=$1
+  `,
+  [req.user.id]
+);
+
+const role = roleCheck.rows[0].role;
+
+const allowed = [
+  "EC_MEMBER",
+  "PRESIDENT",
+  "VICE_PRESIDENT",
+  "GENERAL_SECRETARY",
+  "JOINT_SECRETARY"
+];
+
+if (!allowed.includes(role)) {
+  return res.status(403).json({ error: "You are not allowed to vote" });
+}
+
     if (!r.rows.length) {
       return res.status(404).json({ error: "Resolution not found" });
     }
@@ -395,10 +416,17 @@ async function finalizeResolution(resolutionId) {
 
   // 1️⃣ Count all EC Members + President
   const ec = await pool.query(`
-    SELECT COUNT(*) 
-    FROM users 
-    WHERE role IN ('EC_MEMBER','PRESIDENT')
-  `);
+  SELECT COUNT(*) 
+  FROM users 
+  WHERE role IN (
+    'EC_MEMBER',
+    'PRESIDENT',
+    'VICE_PRESIDENT',
+    'GENERAL_SECRETARY',
+    'JOINT_SECRETARY'
+  )
+`);
+
   const totalEC = Number(ec.rows[0].count);
 
   // 2️⃣ Get votes with roles
