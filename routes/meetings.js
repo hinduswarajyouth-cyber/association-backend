@@ -46,7 +46,7 @@ router.post(
 
       if (
         m.rows[0].agenda_locked ||
-        new Date() > new Date(m.rows[0].meeting_date)
+       new Date() > new Date(m.rows[0].meeting_date).getTime() + 15*60*1000
       ) {
         return res
           .status(403)
@@ -67,15 +67,40 @@ router.post(
 );
 
 /* ======================================================
+   🔓 PRESIDENT AGENDA OVERRIDE
+====================================================== */
+router.post("/agenda-unlock/:id", verifyToken, checkRole("PRESIDENT"), async (req, res) => {
+  try {
+    await pool.query(
+      "UPDATE meetings SET agenda_locked=false WHERE id=$1",
+      [req.params.id]
+    );
+
+    await notifyUsers(
+      [req.user.id],
+      "🔓 Agenda Unlocked",
+      "President unlocked the agenda",
+      "/meetings"
+    );
+
+    res.json({ success: true });
+  } catch (err) {
+    console.error("AGENDA OVERRIDE ERROR:", err.message);
+    res.status(500).json({ error: "Failed to unlock agenda" });
+  }
+});
+/* ======================================================
    📅 GET ALL MEETINGS (ALL USERS)
 ====================================================== */
 router.get("/", verifyToken, async (req, res) => {
   try {
     // 🔒 Auto-lock agendas when meeting starts
     await pool.query(`
-      UPDATE meetings 
-      SET agenda_locked=true 
-      WHERE meeting_date < NOW() AND agenda_locked=false
+     UPDATE meetings
+SET agenda_locked = true
+WHERE 
+  (meeting_date AT TIME ZONE 'Asia/Kolkata' + INTERVAL '15 minutes') < NOW()
+  AND agenda_locked = false;
     `);
 
     const { rows } = await pool.query(
