@@ -96,12 +96,12 @@ router.get("/", verifyToken, async (req, res) => {
   try {
     // 🔒 Auto-lock agendas when meeting starts
     await pool.query(`
-     UPDATE meetings
+UPDATE meetings
 SET agenda_locked = true
 WHERE 
-  (meeting_date AT TIME ZONE 'Asia/Kolkata' + INTERVAL '15 minutes') < NOW()
+  meeting_date + INTERVAL '15 minutes' < NOW()
   AND agenda_locked = false;
-    `);
+`);
 
     const { rows } = await pool.query(
       "SELECT * FROM meetings ORDER BY meeting_date DESC"
