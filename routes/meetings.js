@@ -216,6 +216,35 @@ router.post("/join/:id", verifyToken, async (req, res) => {
     res.status(500).json({ error: "Failed to join meeting" });
   }
 });
+/* ======================================================
+   👥 GET MEETING ATTENDANCE
+====================================================== */
+router.get("/attendance/:id", verifyToken, async (req, res) => {
+  try {
+    const { rows } = await pool.query(
+      `
+      SELECT 
+        u.id,
+        u.name,
+        CASE 
+          WHEN ma.user_id IS NOT NULL THEN true 
+          ELSE false 
+        END AS present
+      FROM users u
+      LEFT JOIN meeting_attendance ma
+        ON ma.user_id = u.id AND ma.meeting_id = $1
+      ORDER BY u.name
+      `,
+      [req.params.id]
+    );
+
+    res.json(rows);
+  } catch (err) {
+    console.error("ATTENDANCE ERROR:", err.message);
+    res.status(500).json({ error: "Failed to load attendance" });
+  }
+});
+
 
 /* ======================================================
    📜 GET RESOLUTIONS

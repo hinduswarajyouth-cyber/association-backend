@@ -28,7 +28,7 @@ router.get("/", verifyToken, async (req, res) => {
 /* =========================
    ✅ MARK AS READ
 ========================= */
-router.post("/read/:id", verifyToken, async (req, res) => {
+router.post("/:id/read", verifyToken, async (req, res) => {
   try {
     await pool.query(
       `
@@ -47,7 +47,7 @@ router.post("/read/:id", verifyToken, async (req, res) => {
 });
 
 /* =========================
-   🧹 MARK ALL AS READ (OPTIONAL)
+   🧹 MARK ALL AS READ
 ========================= */
 router.post("/read-all", verifyToken, async (req, res) => {
   try {
@@ -62,6 +62,7 @@ router.post("/read-all", verifyToken, async (req, res) => {
 
     res.json({ success: true });
   } catch (err) {
+    console.error("READ ALL ERROR 👉", err.message);
     res.status(500).json({ error: "Failed to mark all as read" });
   }
 });
