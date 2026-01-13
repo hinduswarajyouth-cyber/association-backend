@@ -44,14 +44,14 @@ router.post(
       if (!m.rows.length)
         return res.status(404).json({ error: "Meeting not found" });
 
-      const lockTime =
-  new Date(m.rows[0].meeting_date).getTime() + 15 * 60 * 1000;
+  const lockTime = new Date(m.rows[0].meeting_date).getTime() + 15 * 60 * 1000;
 
-if (m.rows[0].agenda_locked && Date.now() > lockTime) {
-        return res
-          .status(403)
-          .json({ error: "Agenda locked. Meeting already started." });
-      }
+// If time passed AND still locked → block
+if (Date.now() > lockTime && m.rows[0].agenda_locked) {
+  return res.status(403).json({
+    error: "Agenda is locked by system",
+  });
+}
 
       await pool.query(
         "UPDATE meetings SET agenda=$1 WHERE id=$2",
