@@ -44,10 +44,10 @@ router.post(
       if (!m.rows.length)
         return res.status(404).json({ error: "Meeting not found" });
 
-      if (
-        m.rows[0].agenda_locked ||
-       new Date() > new Date(m.rows[0].meeting_date).getTime() + 15*60*1000
-      ) {
+      const lockTime =
+  new Date(m.rows[0].meeting_date).getTime() + 15 * 60 * 1000;
+
+if (m.rows[0].agenda_locked && Date.now() > lockTime) {
         return res
           .status(403)
           .json({ error: "Agenda locked. Meeting already started." });
