@@ -363,34 +363,61 @@ router.get("/votes/:rid", verifyToken, async (req, res) => {
    🔒 FINALIZE RESOLUTION
 ====================================================== */
 async function finalizeResolution(resolutionId) {
-  const votes = await pool.query(
-    `
-    SELECT vote, COUNT(*) c
-    FROM meeting_votes
-    WHERE resolution_id=$1
-    GROUP BY vote
-    `,
-    [resolutionId]
-  );
 
+  // 1️⃣ Count all EC Members + President
+  const ec = await pool.query(`
+    SELECT COUNT(*) 
+    FROM users 
+    WHERE role IN ('EC_MEMBER','PRESIDENT')
+  `);
+  const totalEC = Number(ec.rows[0].count);
+
+  // 2️⃣ Get votes with roles
+  const votes = await pool.query(`
+    SELECT v.vote, u.role
+    FROM meeting_votes v
+    JOIN users u ON u.id = v.user_id
+    WHERE v.resolution_id = $1
+  `,[resolutionId]);
+
+  const totalVotes = votes.rows.length;
+
+  // 3️⃣ Quorum check (50%)
+  const quorum = Math.ceil(totalEC * 0.5);
+  if (totalVotes < quorum) {
+    return; // WAIT for more votes
+  }
+
+  // 4️⃣ Count YES / NO
   let yes = 0, no = 0;
+  let presidentVote = null;
 
   votes.rows.forEach(v => {
-    if (v.vote === "YES") yes = Number(v.c);
-    if (v.vote === "NO") no = Number(v.c);
+    if (v.vote === "YES") yes++;
+    if (v.vote === "NO") no++;
+    if (v.role === "PRESIDENT") presidentVote = v.vote;
   });
 
-  const status = yes > no ? "APPROVED" : "REJECTED";
+  let status = "REJECTED";
 
-  await pool.query(
-    `
+  // 5️⃣ Majority
+  if (yes > no) status = "APPROVED";
+  else if (no > yes) status = "REJECTED";
+
+  // 6️⃣ Tie → President decides
+  else {
+    if (!presidentVote) return; // wait till president votes
+    status = presidentVote === "YES" ? "APPROVED" : "REJECTED";
+  }
+
+  // 7️⃣ Lock resolution
+  await pool.query(`
     UPDATE meeting_resolutions
     SET status=$1, is_locked=true, approved_at=NOW()
     WHERE id=$2
-    `,
-    [status, resolutionId]
-  );
+  `,[status, resolutionId]);
 
+  // 8️⃣ Generate PDF only if approved
   if (status === "APPROVED") {
     await generateResolutionPDF(resolutionId);
 
