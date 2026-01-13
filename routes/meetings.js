@@ -54,10 +54,14 @@ if (Date.now() > lockTime && m.rows[0].agenda_locked) {
 }
 
       await pool.query(
-        "UPDATE meetings SET agenda=$1 WHERE id=$2",
-        [req.body.agenda, req.params.id]
-      );
-
+  `
+  UPDATE meetings
+  SET agenda=$1,
+      agenda_locked=false
+  WHERE id=$2
+  `,
+  [req.body.agenda, req.params.id]
+);
       res.json({ success: true });
     } catch (err) {
       console.error("SAVE AGENDA ERROR:", err.message);
