@@ -6,6 +6,7 @@ const notifyUsers = require("../utils/notify");
 const { generateResolutionPDF } = require("../utils/generateResolutionPDF");
 const { generateMinutesPDF } = require("../utils/generateMinutesPDF");
 
+
 const router = express.Router();
 
 const ADMIN_ROLES = ["SUPER_ADMIN", "PRESIDENT"];
@@ -537,47 +538,7 @@ await notifyUsers(
   }
 }
 
-/* ======================================================
-   📜 GENERATE MINUTES OF MEETING PDF
-====================================================== */
-router.post("/minutes-pdf/:meetingId", verifyToken, checkRole(...ADMIN_ROLES), async (req, res) => {
-  try {
-    const { meetingId } = req.params;
 
-    const meeting = await pool.query(
-      "SELECT * FROM meetings WHERE id=$1",
-      [meetingId]
-    );
-    if (!meeting.rows.length) {
-  return res.status(404).json({ error: "Meeting not found" });
-}
-
-    const resolutions = await pool.query(
-      "SELECT * FROM meeting_resolutions WHERE meeting_id=$1",
-      [meetingId]
-    );
-
-    const votes = await pool.query(`
-      SELECT r.id, r.title, u.name, v.vote
-      FROM meeting_resolutions r
-      LEFT JOIN meeting_votes v ON r.id = v.resolution_id
-      LEFT JOIN users u ON u.id = v.user_id
-      WHERE r.meeting_id = $1
-      ORDER BY r.id
-    `, [meetingId]);
-
-    const pdfPath = await generateMinutesPDF(
-      meeting.rows[0],
-      resolutions.rows,
-      votes.rows
-    );
-
-    res.json({ pdf: pdfPath });
-  } catch (err) {
-    console.error("MINUTES PDF ERROR:", err.message);
-    res.status(500).json({ error: "Failed to generate minutes" });
-  }
-});
 // ===============================
 // 🧾 GENERATE MINUTES PDF
 // ===============================
