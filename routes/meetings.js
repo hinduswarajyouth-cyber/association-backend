@@ -563,5 +563,29 @@ router.post(
     }
   }
 );
+/* ======================================================
+   📄 MANUAL RESOLUTION PDF GENERATE
+====================================================== */
+router.post(
+  "/resolution-generate-pdf/:id",
+  verifyToken,
+  checkRole("SUPER_ADMIN", "PRESIDENT"),
+  async (req, res) => {
+    try {
+      // 1️⃣ Generate PDF
+      await generateResolutionPDF(req.params.id);
 
+      // 2️⃣ Fetch updated path
+      const r = await pool.query(
+        "SELECT pdf_path FROM meeting_resolutions WHERE id=$1",
+        [req.params.id]
+      );
+
+      res.json({ pdf: r.rows[0].pdf_path });
+    } catch (err) {
+      console.error("RESOLUTION PDF ERROR:", err);
+      res.status(500).json({ error: "PDF generation failed" });
+    }
+  }
+);
 module.exports = router;
