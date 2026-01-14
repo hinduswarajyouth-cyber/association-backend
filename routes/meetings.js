@@ -64,9 +64,7 @@ if (Date.now() > lockTime && m.rows[0].agenda_locked) {
   [req.body.agenda, req.params.id]
 );
       res.json({ success: true });
-      // background task
-finalizeResolution(req.params.rid)
-  .catch(err => console.error("FINALIZE ERROR:", err.message));
+
     } catch (err) {
       console.error("SAVE AGENDA ERROR:", err.message);
       res.status(500).json({ error: "Failed to save agenda" });
@@ -337,12 +335,42 @@ router.post(
 ====================================================== */
 router.post("/vote/:rid", verifyToken, async (req, res) => {
   try {
+    // 🔐 Only EC members can vote
+    const userRole = await pool.query(
+      "SELECT role FROM users WHERE id=$1",
+      [req.user.id]
+    );
+
+    const allowedRoles = [
+      "EC_MEMBER",
+      "PRESIDENT",
+      "VICE_PRESIDENT",
+      "GENERAL_SECRETARY",
+      "JOINT_SECRETARY",
+    ];
+
+    if (!allowedRoles.includes(userRole.rows[0].role)) {
+      return res.status(403).json({
+        error: "You are not authorized to vote",
+      });
+    }
     const { vote } = req.body;
 
     if (!vote || !["YES", "NO"].includes(vote)) {
       return res.status(400).json({ error: "Invalid vote" });
     }
+// 🔒 Prevent second vote
+const alreadyVoted = await pool.query(
+  `SELECT 1 FROM meeting_votes 
+   WHERE resolution_id=$1 AND user_id=$2`,
+  [req.params.rid, req.user.id]
+);
 
+if (alreadyVoted.rows.length > 0) {
+  return res.status(409).json({
+    error: "You already voted on this resolution",
+  });
+}
     const r = await pool.query(
       "SELECT vote_deadline, is_locked FROM meeting_resolutions WHERE id=$1",
       [req.params.rid]
@@ -360,8 +388,7 @@ router.post("/vote/:rid", verifyToken, async (req, res) => {
       `
       INSERT INTO meeting_votes (resolution_id, user_id, vote)
       VALUES ($1,$2,$3)
-      ON CONFLICT (resolution_id, user_id)
-      DO UPDATE SET vote=$3
+      
       `,
       [req.params.rid, req.user.id, vote]
     );
@@ -406,6 +433,13 @@ router.get("/votes/:rid", verifyToken, async (req, res) => {
 ====================================================== */
 async function finalizeResolution(resolutionId) {
   try {
+     // 🛑 Already finalized check
+    const lockCheck = await pool.query(
+      "SELECT is_locked FROM meeting_resolutions WHERE id=$1",
+      [resolutionId]
+    );
+
+    if (!lockCheck.rows.length || lockCheck.rows[0].is_locked) return;
     // 1️⃣ Count eligible voters
     const ec = await pool.query(`
       SELECT COUNT(*) 
@@ -473,12 +507,13 @@ async function finalizeResolution(resolutionId) {
       // 🔔 Notification (SAFE)
       try {
         const users = await pool.query("SELECT id FROM users");
-        await notifyUsers(
-          users.rows.map(u => u.id),
-          "✅ Resolution Approved",
-          "A resolution has been approved",
-          "/meetings"
-        );
+
+await notifyUsers(
+  users.rows.map(u => u.id),
+  "🔓 Agenda Unlocked",
+  "President unlocked the agenda",
+  "/meetings"
+);
       } catch (notifyErr) {
         console.error("NOTIFICATION ERROR:", notifyErr.message);
       }
