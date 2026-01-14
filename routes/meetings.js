@@ -578,5 +578,29 @@ router.post("/minutes-pdf/:meetingId", verifyToken, checkRole(...ADMIN_ROLES), a
     res.status(500).json({ error: "Failed to generate minutes" });
   }
 });
+// ===============================
+// 🧾 GENERATE MINUTES PDF
+// ===============================
+router.post(
+  "/minutes-pdf/:meetingId",
+  verifyToken,
+  checkRole("SUPER_ADMIN", "PRESIDENT"),
+  async (req, res) => {
+    try {
+      const meetingId = Number(req.params.meetingId);
+
+      if (!meetingId) {
+        return res.status(400).json({ error: "Invalid meeting id" });
+      }
+
+      const pdfPath = await generateMinutesPDF(meetingId);
+
+      res.json({ pdf: pdfPath });
+    } catch (err) {
+      console.error("MINUTES PDF ERROR:", err.message);
+      res.status(500).json({ error: "Failed to generate minutes PDF" });
+    }
+  }
+);
 
 module.exports = router;
