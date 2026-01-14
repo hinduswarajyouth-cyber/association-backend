@@ -413,80 +413,90 @@ router.get("/votes/:rid", verifyToken, async (req, res) => {
    🔒 FINALIZE RESOLUTION
 ====================================================== */
 async function finalizeResolution(resolutionId) {
+  try {
+    // 1️⃣ Count eligible voters
+    const ec = await pool.query(`
+      SELECT COUNT(*) 
+      FROM users 
+      WHERE role IN (
+        'EC_MEMBER',
+        'PRESIDENT',
+        'VICE_PRESIDENT',
+        'GENERAL_SECRETARY',
+        'JOINT_SECRETARY'
+      )
+    `);
 
-  // 1️⃣ Count all EC Members + President
-  const ec = await pool.query(`
-  SELECT COUNT(*) 
-  FROM users 
-  WHERE role IN (
-    'EC_MEMBER',
-    'PRESIDENT',
-    'VICE_PRESIDENT',
-    'GENERAL_SECRETARY',
-    'JOINT_SECRETARY'
-  )
-`);
+    const totalEC = Number(ec.rows[0].count);
 
-  const totalEC = Number(ec.rows[0].count);
+    // 2️⃣ Fetch votes with roles
+    const votes = await pool.query(`
+      SELECT v.vote, u.role
+      FROM meeting_votes v
+      JOIN users u ON u.id = v.user_id
+      WHERE v.resolution_id = $1
+    `, [resolutionId]);
 
-  // 2️⃣ Get votes with roles
-  const votes = await pool.query(`
-    SELECT v.vote, u.role
-    FROM meeting_votes v
-    JOIN users u ON u.id = v.user_id
-    WHERE v.resolution_id = $1
-  `,[resolutionId]);
+    const totalVotes = votes.rows.length;
 
-  const totalVotes = votes.rows.length;
+    // 3️⃣ Quorum (50%)
+    const quorum = Math.ceil(totalEC * 0.5);
+    if (totalVotes < quorum) return;
 
-  // 3️⃣ Quorum check (50%)
-  const quorum = Math.ceil(totalEC * 0.5);
-  if (totalVotes < quorum) {
-    return; // WAIT for more votes
-  }
+    let yes = 0, no = 0;
+    let presidentVote = null;
 
-  // 4️⃣ Count YES / NO
-  let yes = 0, no = 0;
-  let presidentVote = null;
+    votes.rows.forEach(v => {
+      if (v.vote === "YES") yes++;
+      if (v.vote === "NO") no++;
+      if (v.role === "PRESIDENT") presidentVote = v.vote;
+    });
 
-  votes.rows.forEach(v => {
-    if (v.vote === "YES") yes++;
-    if (v.vote === "NO") no++;
-    if (v.role === "PRESIDENT") presidentVote = v.vote;
-  });
+    let status = "REJECTED";
 
-  let status = "REJECTED";
+    if (yes > no) status = "APPROVED";
+    else if (no > yes) status = "REJECTED";
+    else {
+      if (!presidentVote) return;
+      status = presidentVote === "YES" ? "APPROVED" : "REJECTED";
+    }
 
-  // 5️⃣ Majority
-  if (yes > no) status = "APPROVED";
-  else if (no > yes) status = "REJECTED";
+    // 4️⃣ Lock resolution
+    await pool.query(`
+      UPDATE meeting_resolutions
+      SET status=$1, is_locked=true, approved_at=NOW()
+      WHERE id=$2
+    `, [status, resolutionId]);
 
-  // 6️⃣ Tie → President decides
-  else {
-    if (!presidentVote) return; // wait till president votes
-    status = presidentVote === "YES" ? "APPROVED" : "REJECTED";
-  }
+    // 5️⃣ SAFE side-effects
+    if (status === "APPROVED") {
 
-  // 7️⃣ Lock resolution
-  await pool.query(`
-    UPDATE meeting_resolutions
-    SET status=$1, is_locked=true, approved_at=NOW()
-    WHERE id=$2
-  `,[status, resolutionId]);
+      // 🧾 PDF (SAFE)
+      try {
+        await generateResolutionPDF(resolutionId);
+      } catch (pdfErr) {
+        console.error("PDF GENERATION ERROR:", pdfErr.message);
+      }
 
-  // 8️⃣ Generate PDF only if approved
-  if (status === "APPROVED") {
-    await generateResolutionPDF(resolutionId);
+      // 🔔 Notification (SAFE)
+      try {
+        const users = await pool.query("SELECT id FROM users");
+        await notifyUsers(
+          users.rows.map(u => u.id),
+          "✅ Resolution Approved",
+          "A resolution has been approved",
+          "/meetings"
+        );
+      } catch (notifyErr) {
+        console.error("NOTIFICATION ERROR:", notifyErr.message);
+      }
+    }
 
-    const users = await pool.query("SELECT id FROM users");
-    await notifyUsers(
-      users.rows.map(u => u.id),
-      "✅ Resolution Approved",
-      "A resolution has been approved",
-      "/meetings"
-    );
+  } catch (err) {
+    console.error("FINALIZE RESOLUTION ERROR:", err.message);
   }
 }
+
 /* ======================================================
    📜 GENERATE MINUTES OF MEETING PDF
 ====================================================== */
