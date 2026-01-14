@@ -102,8 +102,8 @@ router.get("/", verifyToken, async (req, res) => {
     await pool.query(`
 UPDATE meetings
 SET agenda_locked = true
-WHERE 
-  meeting_date + INTERVAL '15 minutes' < NOW();
+WHERE
+  (meeting_date AT TIME ZONE 'UTC') + INTERVAL '15 minutes' < NOW()
   AND agenda_locked = false;
 `);
 
