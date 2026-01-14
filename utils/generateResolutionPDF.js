@@ -169,10 +169,14 @@ System: Association Management System`,
   /* =========================
      SAVE PATH
   ========================= */
+  const pdfPath = `uploads/resolutions/resolution_${resolutionId}.pdf`;
+
   await pool.query(
     "UPDATE meeting_resolutions SET pdf_path=$1 WHERE id=$2",
-    [`uploads/resolutions/resolution_${resolutionId}.pdf`, resolutionId]
+    [pdfPath, resolutionId]
   );
+
+  return pdfPath;
 }
 
 module.exports = { generateResolutionPDF };
