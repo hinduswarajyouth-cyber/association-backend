@@ -4,6 +4,7 @@ const verifyToken = require("../middleware/verifyToken");
 const checkRole = require("../middleware/checkRole");
 const notifyUsers = require("../utils/notify");
 const { generateResolutionPDF } = require("../utils/generateResolutionPDF");
+const { generateMinutesPDF } = require("../utils/generateMinutesPDF");
 
 const router = express.Router();
 
@@ -63,6 +64,9 @@ if (Date.now() > lockTime && m.rows[0].agenda_locked) {
   [req.body.agenda, req.params.id]
 );
       res.json({ success: true });
+      // background task
+finalizeResolution(req.params.rid)
+  .catch(err => console.error("FINALIZE ERROR:", err.message));
     } catch (err) {
       console.error("SAVE AGENDA ERROR:", err.message);
       res.status(500).json({ error: "Failed to save agenda" });
@@ -335,31 +339,14 @@ router.post("/vote/:rid", verifyToken, async (req, res) => {
   try {
     const { vote } = req.body;
 
+    if (!vote || !["YES", "NO"].includes(vote)) {
+      return res.status(400).json({ error: "Invalid vote" });
+    }
+
     const r = await pool.query(
-      "SELECT vote_deadline,is_locked FROM meeting_resolutions WHERE id=$1",
+      "SELECT vote_deadline, is_locked FROM meeting_resolutions WHERE id=$1",
       [req.params.rid]
     );
-
-    const roleCheck = await pool.query(
-  `
-  SELECT role FROM users WHERE id=$1
-  `,
-  [req.user.id]
-);
-
-const role = roleCheck.rows[0].role;
-
-const allowed = [
-  "EC_MEMBER",
-  "PRESIDENT",
-  "VICE_PRESIDENT",
-  "GENERAL_SECRETARY",
-  "JOINT_SECRETARY"
-];
-
-if (!allowed.includes(role)) {
-  return res.status(403).json({ error: "You are not allowed to vote" });
-}
 
     if (!r.rows.length) {
       return res.status(404).json({ error: "Resolution not found" });
@@ -379,8 +366,13 @@ if (!allowed.includes(role)) {
       [req.params.rid, req.user.id, vote]
     );
 
-    await finalizeResolution(req.params.rid);
+    // ✅ send success immediately
     res.json({ success: true });
+
+    // ✅ background finalize
+    finalizeResolution(req.params.rid)
+      .catch(err => console.error("FINALIZE ERROR:", err.message));
+
   } catch (err) {
     console.error("VOTE ERROR:", err.message);
     res.status(500).json({ error: "Vote failed" });
