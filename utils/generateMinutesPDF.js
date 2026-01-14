@@ -20,6 +20,7 @@ async function generateMinutesPDF(meetingId) {
 
   if (!rows.length) return;
   const m = rows[0];
+  
 
   const attendees = await pool.query(`
     SELECT u.name
