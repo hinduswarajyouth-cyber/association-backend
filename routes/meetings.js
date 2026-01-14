@@ -457,11 +457,18 @@ async function finalizeResolution(resolutionId) {
 
     // 2️⃣ Fetch votes with roles
     const votes = await pool.query(`
-      SELECT v.vote, u.role
-      FROM meeting_votes v
-      JOIN users u ON u.id = v.user_id
-      WHERE v.resolution_id = $1
-    `, [resolutionId]);
+  SELECT v.vote, u.role
+  FROM meeting_votes v
+  JOIN users u ON u.id = v.user_id
+  WHERE v.resolution_id = $1
+    AND u.role IN (
+      'EC_MEMBER',
+      'PRESIDENT',
+      'VICE_PRESIDENT',
+      'GENERAL_SECRETARY',
+      'JOINT_SECRETARY'
+    )
+`, [resolutionId]);
 
     const totalVotes = votes.rows.length;
 
@@ -514,6 +521,12 @@ await notifyUsers(
   "President unlocked the agenda",
   "/meetings"
 );
+await notifyUsers(
+  users.rows.map(u => u.id),
+  "✅ Resolution Approved",
+  "A resolution has been approved",
+  "/meetings"
+);
       } catch (notifyErr) {
         console.error("NOTIFICATION ERROR:", notifyErr.message);
       }
@@ -535,6 +548,9 @@ router.post("/minutes-pdf/:meetingId", verifyToken, checkRole(...ADMIN_ROLES), a
       "SELECT * FROM meetings WHERE id=$1",
       [meetingId]
     );
+    if (!meeting.rows.length) {
+  return res.status(404).json({ error: "Meeting not found" });
+}
 
     const resolutions = await pool.query(
       "SELECT * FROM meeting_resolutions WHERE meeting_id=$1",
