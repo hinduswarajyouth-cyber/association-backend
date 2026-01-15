@@ -84,7 +84,7 @@ ${footer}
 /* ===============================
    👤 ADD MEMBER – WELCOME MAIL
 ================================ */
-exports.addMemberTemplate = ({ name, username, password }) => `
+exports.addMemberTemplate = ({ name, username, memberId, password }) => `
 ${header}
 
 <h3 style="color:#0d47a1">Welcome to HSY Association 🎉</h3>
@@ -100,14 +100,18 @@ You have been successfully added as a member of
 
 <table style="width:100%;border-collapse:collapse">
   <tr>
-    <td style="padding:6px"><b>Association ID</b></td>
-    <td style="padding:6px">${username}</td>
-  </tr>
-  <tr>
-    <td style="padding:6px"><b>Temporary Password</b></td>
-    <td style="padding:6px">${password}</td>
-  </tr>
-</table>
+  <td style="padding:6px"><b>Association ID</b></td>
+  <td style="padding:6px">${username}</td>
+</tr>
+<tr>
+  <td style="padding:6px"><b>Member ID</b></td>
+  <td style="padding:6px">${memberId}</td>
+</tr>
+<tr>
+  <td style="padding:6px"><b>Temporary Password</b></td>
+  <td style="padding:6px">${password}</td>
+</tr>
+
 
 <p style="color:#d32f2f">
 ⚠️ Please change your password after first login.
