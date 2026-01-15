@@ -60,23 +60,27 @@ router.post(
         password,
       } = req.body;
 
-      await pool.query(
-        `
-        INSERT INTO users
-        (member_id, name, username, personal_email, phone, address, role, password, active)
-        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,true)
-        `,
-        [
-          member_id,
-          name,
-          association_id,
-          personal_email,
-          phone,
-          address,
-          role,
-          password, // ⚠️ assume already hashed
-        ]
-      );
+    const result = await pool.query(
+  `
+  INSERT INTO users
+  (member_id, name, username, personal_email, phone, address, role, password, active)
+  VALUES ($1,$2,$3,$4,$5,$6,$7,$8,true)
+  RETURNING member_id, username
+  `,
+  [
+    member_id,
+    name,
+    association_id,
+    personal_email,
+    phone,
+    address,
+    role,
+    password,
+  ]
+);
+
+const savedMemberId = result.rows[0].member_id;
+const savedAssociationId = result.rows[0].username;
 
       // Optional welcome mail
       if (personal_email) {
