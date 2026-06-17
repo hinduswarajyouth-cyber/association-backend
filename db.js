@@ -12,4 +12,8 @@ pool.on("connect", () => {
   console.log("DB Connected");
 });
 
+pool.on("error", (err) => {
+  console.error("Unexpected error on idle client", err);
+});
+
 module.exports = pool;
