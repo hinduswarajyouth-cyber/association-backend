@@ -93,6 +93,15 @@ pool
   .then(() => console.log("✅ DB Connected"))
   .catch((err) => console.error("❌ DB Error:", err.message));
 
+app.get("/debug-db", async (req, res) => {
+  try {
+    const result = await pool.query("SELECT 1 as val");
+    res.json({ success: true, db: "connected", result: result.rows, env: process.env.NODE_ENV, dbUrlDefined: !!process.env.DATABASE_URL });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message, stack: err.stack, dbUrlDefined: !!process.env.DATABASE_URL, dbUrlStart: process.env.DATABASE_URL ? process.env.DATABASE_URL.substring(0, 30) : null });
+  }
+});
+
 /* =========================
    🚏 ROUTES
 ========================= */
